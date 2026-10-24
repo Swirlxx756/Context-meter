@@ -1,0 +1,7 @@
+{
+  "name": "context-meter",
+  "version": "0.1.0",
+  "description": "Shows the live context window usage in the prompt footer",
+  "author": { "name": "Swirlxx756" },
+  "types": "./types/index.d.ts"
+}

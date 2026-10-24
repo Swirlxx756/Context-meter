@@ -1,0 +1,6 @@
+{
+  "name": "context-meter",
+  "description": "Live context window usage in the Claude Code prompt footer",
+  "owner": { "name": "Swirlxx756" },
+  "plugins": [{ "name": "context-meter", "source": "./" }]
+}
