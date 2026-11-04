@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register, SessionContextBreakdown, TurnUsage } from 'claude-code'
+import type { ContextCategory, Register, SessionContextBreakdown, TurnUsage } from 'claude-code'
 
 import type { Fill, Section, Stats } from '../types'
 
@@ -75,9 +75,9 @@ const ringSvg = (size: number, percent: number | undefined) => {
 }
 
 // A bar for one category's share of the window, in the context card.
-const barSvg = (fraction: number) => {
+const barSvg = (fraction: number, color: string) => {
   const w = Math.max(2, Math.min(60, fraction * 60)).toFixed(1)
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="60" height="6" viewBox="0 0 60 6"><rect width="60" height="6" rx="3" fill="${GREY}" fill-opacity="0.25"/><rect width="${w}" height="6" rx="3" fill="${ACCENT}"/></svg>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="60" height="6" viewBox="0 0 60 6"><rect width="60" height="6" rx="3" fill="${GREY}" fill-opacity="0.25"/><rect width="${w}" height="6" rx="3" fill="${color}"/></svg>`
 }
 
 const timingRows = (s: Stats): [string, string][] => [
@@ -192,19 +192,20 @@ export const register: Register = on => {
     }
   })
 
-  // A press on a figure's Client: toggle that figure's card.
+  // The pointer over a figure's Client shows its card; leaving it hides the card again.
   on('ui.message', async ($, e, next) => {
     const match = /^segment-(stats|tokens|context)$/.exec(e.element)
-    if (match && (e.data as { press?: boolean } | null)?.press) {
+    const hover = (e.data as { hover?: boolean } | null)?.hover
+    if (match && hover !== undefined) {
       const which = match[1] as Section
-      await update($, opened, now => (now === which ? null : which))
+      await update($, opened, now => (hover ? which : now === which ? null : now))
     }
 
     return next(e)
   })
 
-  // One row above the prompt, centered (the footer's slot is short and cut with an ellipsis): a
-  // capsule of the figures, each one a control that opens its card right above itself.
+  // One row above the prompt, centered (the footer's slot is short and cut with an ellipsis): the
+  // figures, each one showing its card right above itself while the pointer is over it.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, fill)
     const totals = await read($, stats)
@@ -217,7 +218,7 @@ export const register: Register = on => {
     const resolved = $.ui.resolve(e) as unknown as Elements
     const el: Elements = e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
     const { Box, Text, Button, Svg, Client } = el
-    // A Client draws plain text and takes the click itself; where none is drawn, a Button.
+    // A Client draws plain text and hears the pointer; where none is drawn (VS Code, mobile), a Button.
     const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
     const open = await read($, opened)
     const toggle = (which: Section) => () => void update($, opened, now => (now === which ? null : which))
@@ -231,11 +232,10 @@ export const register: Register = on => {
     }
     segments.push({ id: 'context', glyph: '◔', svg: ringSvg(14, percentOf(current)), title: '上下文', label: contextLabel(current) })
 
-    // The open one draws at full strength, the rest dim: the capsule's selection.
+    // The open one draws at full strength, the rest dim: the row's selection.
     const capsule = (
-      <Box flexDirection="row" alignItems="center" alignSelf="center" gap={1} borderStyle="round" borderDimColor paddingX={1}>
-        {segments.flatMap((s, i) => [
-          ...(i > 0 ? [<Text dimColor>│</Text>] : []),
+      <Box flexDirection="row" alignItems="center" alignSelf="center" columnGap={3}>
+        {segments.map(s => (
           <Box flexDirection="row" alignItems="center" gap={1}>
             {Svg ? <Svg source={s.svg} alt={s.title} width={14} height={14} /> : <Text dimColor>{s.glyph}</Text>}
             {hasClient ? (
@@ -243,8 +243,8 @@ export const register: Register = on => {
             ) : (
               <Button key={s.id} plain dimColor={open !== s.id} label={s.label} onPress={toggle(s.id)} />
             )}
-          </Box>,
-        ])}
+          </Box>
+        ))}
       </Box>
     )
 
@@ -274,7 +274,7 @@ export const register: Register = on => {
       <Box flexDirection="row" justifyContent="center">
         <Box flexDirection="column">
           <Box flexDirection="row" justifyContent={align}>
-            {card(el, segment.svg, segment.title, body, close)}
+            {card(el, segment.svg, segment.title, body, hasClient ? undefined : close)}
           </Box>
           {capsule}
         </Box>
@@ -283,14 +283,14 @@ export const register: Register = on => {
   })
 }
 
-// One figure's card: a rounded panel, the icon and title over its rows, × to close.
-const card = ({ Box, Text, Button, Svg }: Elements, svg: string, title: string, body: unknown[], close: () => void) => (
-  <Box flexDirection="column" width={36} borderStyle="round" borderDimColor paddingX={1}>
+// One figure's card: a rounded panel, the icon and title over its rows; × where it opened on a click.
+const card = ({ Box, Text, Button, Svg }: Elements, svg: string, title: string, body: unknown[], close?: () => void) => (
+  <Box flexDirection="column" width={40} borderStyle="round" borderDimColor paddingX={1}>
     <Box flexDirection="row" alignItems="center" gap={1}>
       {Svg ? <Svg source={svg} alt={title} width={16} height={16} /> : null}
       <Text weight="medium">{title}</Text>
       <Box flexGrow={1} />
-      <Button key="close" plain dimColor role="dismiss" label="×" onPress={close} />
+      {close ? <Button key="close" plain dimColor role="dismiss" label="×" onPress={close} /> : null}
     </Box>
     {body}
   </Box>
@@ -307,26 +307,51 @@ const rows = ({ Box, Text }: Elements, list: [string, string][]) =>
     </Box>
   ))
 
+// The window in four: what /context lists, folded by its row names (the engine names no groups).
+const GROUPS = [
+  { name: '系统提示词', color: ACCENT },
+  { name: '工具定义', color: '#6a9bcc' },
+  { name: '对话消息', color: '#788c5d' },
+  { name: '剩余空间', color: GREY },
+] as const
+
+const groupOf = (c: ContextCategory): number | undefined => {
+  if (c.kind === 'free') return 3
+  if (c.kind !== 'used') return undefined // the compaction buffer, and deferred tools outside the window
+  if (/message/i.test(c.name)) return 2
+  if (/tool|agent|skill|command/i.test(c.name)) return 1
+  return 0 // the system prompt itself, memory files
+}
+
 const contextRows = (el: Elements, current: Fill, breakdown: SessionContextBreakdown | undefined) => {
   const { Box, Text, Svg } = el
   const head: [string, string][] = [
     ['已用', current.tokens === undefined ? '—' : `${compact(current.tokens)} (${current.percent ?? 0}%)`],
     ['窗口', compact(current.window)],
   ]
-  if (breakdown) head.push(['模型', breakdown.model])
-  const whole = breakdown?.rawMaxTokens ?? current.window
-  const categories = (breakdown?.categories ?? []).filter(c => c.tokens > 0)
+  if (!breakdown) return rows(el, head)
+
+  const whole = breakdown.rawMaxTokens
+  const sums = GROUPS.map(() => 0)
+  for (const c of breakdown.categories) {
+    const g = groupOf(c)
+    if (g !== undefined) sums[g] = (sums[g] ?? 0) + c.tokens
+  }
 
   return [
     ...rows(el, head),
-    ...categories.map(c => (
-      <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-        <Text dimColor>{c.name}</Text>
-        <Box flexDirection="row" alignItems="center" gap={1}>
-          {Svg ? <Svg source={barSvg(c.tokens / whole)} alt={c.name} width={60} height={6} /> : null}
-          <Text tabular>{compact(c.tokens)}</Text>
+    ...GROUPS.map((g, i) => {
+      const tokens = sums[i] ?? 0
+      const share = whole > 0 ? tokens / whole : 0
+      return (
+        <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+          <Text dimColor>{g.name}</Text>
+          <Box flexDirection="row" alignItems="center" gap={1}>
+            {Svg ? <Svg source={barSvg(share, g.color)} alt={g.name} width={60} height={6} /> : null}
+            <Text tabular>{`${compact(tokens)} · ${(share * 100).toFixed(1)}%`}</Text>
+          </Box>
         </Box>
-      </Box>
-    )),
+      )
+    }),
   ]
 }

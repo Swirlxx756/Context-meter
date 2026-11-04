@@ -1,6 +1,6 @@
 {
   "name": "context-meter",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "Shows context window usage, turns, timings, decode speed and cache hits above the prompt",
   "author": { "name": "Swirlxx756" },
   "types": "./types/index.d.ts"

@@ -52,9 +52,11 @@ test('before any response the row shows a dash', async ($, on) => {
   await ui.unmount()
 })
 
-// A left press on a figure, as the desktop and terminal report one over its Client.
-const click = (ui: { pointer: (e: any) => Promise<void> }, id: string) =>
-  ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: `segment-${id}` })
+// The pointer entering and leaving a figure, as the desktop and terminal report it over its Client.
+const enter = (ui: { pointer: (e: any) => Promise<void> }, id: string) =>
+  ui.pointer({ type: 'enter', x: 1, y: 0, in: `segment-${id}` })
+const leave = (ui: { pointer: (e: any) => Promise<void> }, id: string) =>
+  ui.pointer({ type: 'leave', x: 1, y: 0, in: `segment-${id}` })
 
 // What a figure's Client is handed to draw.
 const label = async (ui: { find: (q: any) => Promise<any> }, id: string) =>
@@ -68,10 +70,25 @@ const usage = (input: number, output: number, cacheRead: number, cacheWrite: num
   cache_creation_input_tokens: cacheWrite,
 })
 
-test('the footer adds turns, speed, tokens and cache hits; each opens its card', async ($, on) => {
+test('the footer adds turns, speed, tokens and cache hits; each shows its card on hover', async ($, on) => {
   drawModes(on)
   const clock = mock.clock(on)
-  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] } }))
+  const category = (name: string, tokens: number, kind: string) => ({ name, tokens, kind, color: 'text', isDeferred: kind === 'deferred' })
+  const breakdown = {
+    rawMaxTokens: 200_000,
+    model: 'claude-opus-5-5',
+    categories: [
+      category('System prompt', 3_000, 'used'),
+      category('System tools', 12_000, 'used'),
+      category('MCP tools', 8_000, 'used'),
+      category('Memory files', 1_000, 'used'),
+      category('Messages', 60_000, 'used'),
+      category('Free space', 83_000, 'free'),
+      category('Autocompact buffer', 33_000, 'buffer'),
+      category('MCP tools (deferred)', 9_000, 'deferred'),
+    ],
+  }
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000, breakdown }, rateLimits: [] } }) as any)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('turn.start', (_, e) => ({ turnId: e.turnId }))
   // Stands for the model: the first token 2 s after the request, 200 output tokens over 1 s more.
@@ -113,20 +130,27 @@ test('the footer adds turns, speed, tokens and cache hits; each opens its card',
   expect(await label(ui, 'context')).toBe('Context 42% · 84k / 200k')
   expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
 
-  // Each figure toggles its own card above the row.
-  await click(ui, 'stats')
+  // The pointer over a figure shows its card above the row, with no × to press; leaving hides it.
+  await enter(ui, 'stats')
   expect(((await ui.find({ key: 'segment-stats' }))?.props.props as { isActive: boolean }).isActive).toBe(true)
   for (const text of ['用时与速度', '6.0s', '4.0s', '2.0s']) {
     expect(await ui.find({ type: 'Text', text })).toBeDefined()
   }
-  await click(ui, 'tokens')
+  expect(await ui.find({ key: 'close' })).toBeUndefined()
+  // Moving straight onto the next figure: its enter can come before the last one's leave.
+  await enter(ui, 'tokens')
+  await leave(ui, 'stats')
   expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: '19k' })).toBeDefined()
-  await click(ui, 'tokens')
+  await leave(ui, 'tokens')
   expect(await ui.find({ type: 'Text', text: '19k' })).toBeUndefined()
-  await click(ui, 'context')
+  await enter(ui, 'context')
   expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeDefined()
-  await ui.press({ key: 'close' })
+  // The window in four: system prompt and memory, tool definitions, messages, and what is left.
+  for (const text of ['系统提示词', '4k · 2.0%', '工具定义', '20k · 10.0%', '对话消息', '60k · 30.0%', '剩余空间', '83k · 41.5%']) {
+    expect(await ui.find({ type: 'Text', text })).toBeDefined()
+  }
+  await leave(ui, 'context')
   expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeUndefined()
   await ui.unmount()
 })
