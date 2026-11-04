@@ -204,60 +204,49 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // One row above the prompt, centered (the footer's slot is short and cut with an ellipsis): the
-  // figures, each one showing its card right above itself while the pointer is over it.
+  // The figures sit in the hint line under the prompt, on the surfaces that raise it (terminal,
+  // desktop): the band above the prompt comes in a panel of the desktop's own, so it holds only
+  // the card, and only while the pointer is over a figure.
+  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+    const current = await read($, fill)
+
+    if (current === null) {
+      return next(e)
+    }
+
+    const el = elementsFor($, e)
+    const { Box, Text } = el
+    const figures = row(el, segmentsOf(current, await read($, stats)), await read($, opened), undefined)
+
+    return (
+      <Box flexDirection="row" alignItems="center" columnGap={3}>
+        {e.props.hint !== '' && <Text dimColor>{e.props.hint}</Text>}
+        {figures}
+      </Box>
+    )
+  })
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, fill)
-    const totals = await read($, stats)
 
     if (e.props.hasSurvey || current === null) {
       return next(e)
     }
 
-    // The terminal's table answers Svg with a stand-in that draws nothing: it gets glyphs instead.
-    const resolved = $.ui.resolve(e) as unknown as Elements
-    const el: Elements = e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
-    const { Box, Text, Button, Svg, Client } = el
-    // A Client draws plain text and hears the pointer; where none is drawn (VS Code, mobile), a Button.
-    const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
+    const el = elementsFor($, e)
+    const { Box } = el
+    const totals = await read($, stats)
     const open = await read($, opened)
+    const segments = segmentsOf(current, totals)
+    const segment = segments.find(s => s.id === open)
+    // Where no hint line is raised (VS Code, mobile) the figures stay here, opened on a click.
+    const hasHint = e.surface === 'terminal' || e.surface === 'desktop'
     const toggle = (which: Section) => () => void update($, opened, now => (now === which ? null : which))
-    const close = () => void update($, opened, () => null)
-    const hasTotals = totals !== null && totals.steps > 0
 
-    const segments: { id: Section; glyph: string; svg: string; title: string; label: string }[] = []
-    if (hasTotals) {
-      segments.push({ id: 'stats', glyph: '◷', svg: gaugeSvg(14), title: '用时与速度', label: turnsLabel(totals) })
-      segments.push({ id: 'tokens', glyph: '⛁', svg: databaseSvg(14), title: 'Token', label: tokensLabel(totals) })
-    }
-    segments.push({ id: 'context', glyph: '◔', svg: ringSvg(14, percentOf(current)), title: '上下文', label: contextLabel(current) })
-
-    // The open one draws at full strength, the rest dim: the row's selection.
-    const capsule = (
-      <Box flexDirection="row" alignItems="center" alignSelf="center" columnGap={3}>
-        {segments.map(s => (
-          <Box flexDirection="row" alignItems="center" gap={1}>
-            {Svg ? <Svg source={s.svg} alt={s.title} width={14} height={14} /> : <Text dimColor>{s.glyph}</Text>}
-            {hasClient ? (
-              <Client key={`segment-${s.id}`} module="./segment.tsx" props={{ label: s.label, isActive: open === s.id }} />
-            ) : (
-              <Button key={s.id} plain dimColor={open !== s.id} label={s.label} onPress={toggle(s.id)} />
-            )}
-          </Box>
-        ))}
-      </Box>
-    )
-
-    const index = segments.findIndex(s => s.id === open)
-    if (index < 0) {
-      return (
-        <Box flexDirection="row" justifyContent="center">
-          {capsule}
-        </Box>
-      )
+    if (segment === undefined) {
+      return hasHint ? next(e) : <Box flexDirection="row" justifyContent="center">{row(el, segments, open, toggle)}</Box>
     }
 
-    const segment = segments[index]!
     let body: unknown[]
     if (segment.id === 'context') {
       const { context } = await $.session.usage({ breakdown: 'summary' })
@@ -265,23 +254,54 @@ export const register: Register = on => {
     } else {
       body = rows(el, segment.id === 'stats' ? timingRows(totals!) : tokenRows(totals!))
     }
+    const shown = card(el, segment.svg, segment.title, body, hasHint ? undefined : () => void update($, opened, () => null))
 
-    // Over its own figure: the first card flush with the capsule's left edge, the last with its
-    // right, a middle one centered, the column as wide as the wider of the two.
-    const align = index === 0 && segments.length > 1 ? 'flex-start' : index === segments.length - 1 && segments.length > 1 ? 'flex-end' : 'center'
-
-    return (
-      <Box flexDirection="row" justifyContent="center">
-        <Box flexDirection="column">
-          <Box flexDirection="row" justifyContent={align}>
-            {card(el, segment.svg, segment.title, body, hasClient ? undefined : close)}
-          </Box>
-          {capsule}
-        </Box>
+    return hasHint ? (
+      <Box flexDirection="row">{shown}</Box>
+    ) : (
+      <Box flexDirection="column" alignItems="center">
+        {shown}
+        {row(el, segments, open, toggle)}
       </Box>
     )
   })
 }
+
+type Segment = { id: Section; glyph: string; svg: string; title: string; label: string }
+
+const segmentsOf = (current: Fill, totals: Stats | null): Segment[] => {
+  const segments: Segment[] = []
+  if (totals !== null && totals.steps > 0) {
+    segments.push({ id: 'stats', glyph: '◷', svg: gaugeSvg(14), title: '用时与速度', label: turnsLabel(totals) })
+    segments.push({ id: 'tokens', glyph: '⛁', svg: databaseSvg(14), title: 'Token', label: tokensLabel(totals) })
+  }
+  segments.push({ id: 'context', glyph: '◔', svg: ringSvg(14, percentOf(current)), title: '上下文', label: contextLabel(current) })
+  return segments
+}
+
+// The terminal's table answers Svg with a stand-in that draws nothing: it gets glyphs instead.
+const elementsFor = ($: { ui: { resolve: (e: never) => unknown } }, e: { surface: string }): Elements => {
+  const resolved = $.ui.resolve(e as never) as Elements
+  return e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
+}
+
+// The figures, each led by its icon. With no `toggle` each is a Client that hears the pointer (a
+// hover shows its card, and plain text, where a Button would bring the desktop's native chip);
+// with one, a Button pressed to open it. The open one draws at full strength, the rest dim.
+const row = ({ Box, Text, Button, Svg, Client }: Elements, segments: Segment[], open: Section | null, toggle: ((which: Section) => () => void) | undefined) => (
+  <Box flexDirection="row" alignItems="center" columnGap={3}>
+    {segments.map(s => (
+      <Box flexDirection="row" alignItems="center" gap={1}>
+        {Svg ? <Svg source={s.svg} alt={s.title} width={14} height={14} /> : <Text dimColor>{s.glyph}</Text>}
+        {toggle === undefined ? (
+          <Client key={`segment-${s.id}`} module="./segment.tsx" props={{ label: s.label, isActive: open === s.id }} />
+        ) : (
+          <Button key={s.id} plain dimColor={open !== s.id} label={s.label} onPress={toggle(s.id)} />
+        )}
+      </Box>
+    ))}
+  </Box>
+)
 
 // One figure's card: a rounded panel, the icon and title over its rows; × where it opened on a click.
 const card = ({ Box, Text, Button, Svg }: Elements, svg: string, title: string, body: unknown[], close?: () => void) => (

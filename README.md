@@ -1,6 +1,6 @@
 # context-meter
 
-A Claude Code plugin that adds a row of session figures above the prompt, centered:
+A Claude Code plugin that adds a row of session figures to the hint line under the prompt:
 
 ```
 ◷ 4 轮·48 步 · 215 tok/s   ⛁ 3.6M tok · 缓存命中 94.01%   ◔ Context 42% · 84k / 200k
@@ -8,7 +8,7 @@ A Claude Code plugin that adds a row of session figures above the prompt, center
 
 Turns and model steps with decode speed; all tokens sent and received with the prompt cache hit rate; the context window fill. The desktop app draws the icons as vector images (the ring fills with the context and turns red past 80%); the terminal draws the glyphs above. Before the first response the row shows the window alone.
 
-Point at a figure and its card shows right above it; move away and it hides. (VS Code and the mobile app, which draw no `Client`, open it on a click instead, with × to close.)
+Point at a figure and its card shows above the prompt; move away and it hides. (VS Code and the mobile app, which raise no hint line, draw the row above the prompt and open a card on a click, with × to close.)
 
 - 用时与速度: turns, steps, LLM time, tool time (a permission prompt's wait counts), average time per step and to first token, decode speed.
 - Token: total, input, cache reads and writes, output, cache hit rate.

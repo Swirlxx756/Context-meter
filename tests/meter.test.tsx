@@ -3,6 +3,7 @@ import type { On } from 'claude-code'
 
 const BAND = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: { offset: 0, bodyRows: 20 }, view: {} }
 const above = { component: 'AbovePrompt', props: BAND } as const
+const hint = { component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '' } } as const
 
 // Stands for the engine's footer: draws the modes it is handed, joined as the engine joins them.
 const drawModes = (on: On) => {
@@ -12,7 +13,12 @@ const drawModes = (on: On) => {
 
     return <Text>{e.props.modes.join(' & ')}</Text>
   })
-  // And for the empty band above the prompt.
+  // And for the hint line under the prompt, and the empty band above it.
+  on('ui.render', { component: 'PromptHint' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+
+    return <Text>{e.props.hint}</Text>
+  })
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Box } = $.ui.resolve(e)
 
@@ -20,7 +26,7 @@ const drawModes = (on: On) => {
   })
 }
 
-test('the row above the prompt shows the context fill on every surface', async ($, on) => {
+test('the hint line under the prompt shows the context fill on every surface', async ($, on) => {
   drawModes(on)
 
   await $.session.measure({
@@ -30,7 +36,7 @@ test('the row above the prompt shows the context fill on every surface', async (
   })
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'context-meter', surface, ...above })
+    const ui = await $.ui.mount({ plugin: 'context-meter', surface, ...hint })
     expect(await label(ui, 'context')).toBe('Context 42% · 84k / 200k')
     if (surface === 'desktop') {
       expect((await ui.find({ type: 'Svg' }))?.props.alt).toBe('上下文')
@@ -46,7 +52,7 @@ test('before any response the row shows a dash', async ($, on) => {
 
   await $.session.measure({ context: { window: 1_000_000 }, rateLimits: [], changed: ['context'] })
 
-  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
+  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...hint })
   expect(await label(ui, 'context')).toBe('Context — / 1.0M')
   expect(await ui.find({ key: 'segment-stats' })).toBeUndefined()
   await ui.unmount()
@@ -124,33 +130,35 @@ test('the footer adds turns, speed, tokens and cache hits; each shows its card o
   }
   await $.tool.call({ tool: 'Bash', command: 'ls' })
 
-  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
+  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...hint })
+  const band = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
   expect(await label(ui, 'stats')).toBe('1 轮·2 步 · 200 tok/s')
   expect(await label(ui, 'tokens')).toBe('20k tok · 缓存命中 94.00%')
   expect(await label(ui, 'context')).toBe('Context 42% · 84k / 200k')
-  expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
 
-  // The pointer over a figure shows its card above the row, with no × to press; leaving hides it.
+  // The pointer over a figure shows its card in the band above the prompt, with no × to press; leaving hides it.
   await enter(ui, 'stats')
   expect(((await ui.find({ key: 'segment-stats' }))?.props.props as { isActive: boolean }).isActive).toBe(true)
   for (const text of ['用时与速度', '6.0s', '4.0s', '2.0s']) {
-    expect(await ui.find({ type: 'Text', text })).toBeDefined()
+    expect(await band.find({ type: 'Text', text })).toBeDefined()
   }
-  expect(await ui.find({ key: 'close' })).toBeUndefined()
+  expect(await band.find({ key: 'close' })).toBeUndefined()
   // Moving straight onto the next figure: its enter can come before the last one's leave.
   await enter(ui, 'tokens')
   await leave(ui, 'stats')
-  expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
-  expect(await ui.find({ type: 'Text', text: '19k' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: '19k' })).toBeDefined()
   await leave(ui, 'tokens')
-  expect(await ui.find({ type: 'Text', text: '19k' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: '19k' })).toBeUndefined()
   await enter(ui, 'context')
-  expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: '84k (42%)' })).toBeDefined()
   // The window in four: system prompt and memory, tool definitions, messages, and what is left.
   for (const text of ['系统提示词', '4k · 2.0%', '工具定义', '20k · 10.0%', '对话消息', '60k · 30.0%', '剩余空间', '83k · 41.5%']) {
-    expect(await ui.find({ type: 'Text', text })).toBeDefined()
+    expect(await band.find({ type: 'Text', text })).toBeDefined()
   }
   await leave(ui, 'context')
-  expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: '84k (42%)' })).toBeUndefined()
+  await band.unmount()
   await ui.unmount()
 })
