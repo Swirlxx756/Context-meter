@@ -192,8 +192,8 @@ export const register: Register = on => {
     }
   })
 
-  // One row above the prompt, at its full width (the footer's slot is short and cut with an
-  // ellipsis): the figures, right-aligned, each one a control that toggles its card above the row.
+  // One row above the prompt, centered (the footer's slot is short and cut with an ellipsis): a
+  // capsule of the figures, each one a control that opens its card right above itself.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, fill)
     const totals = await read($, stats)
@@ -209,64 +209,73 @@ export const register: Register = on => {
     const open = await read($, opened)
     const toggle = (which: Section) => () => void update($, opened, now => (now === which ? null : which))
     const close = () => void update($, opened, () => null)
-    const icon = (glyph: string, svg: string, alt: string) =>
-      Svg ? <Svg source={svg} alt={alt} width={14} height={14} /> : <Text dimColor>{glyph}</Text>
     const hasTotals = totals !== null && totals.steps > 0
 
-    const line = (
-      <Box flexDirection="row" justifyContent="flex-end" alignItems="center" columnGap={3}>
-        {hasTotals && (
+    const segments: { id: Section; glyph: string; svg: string; title: string; label: string }[] = []
+    if (hasTotals) {
+      segments.push({ id: 'stats', glyph: '◷', svg: gaugeSvg(14), title: '用时与速度', label: turnsLabel(totals) })
+      segments.push({ id: 'tokens', glyph: '⛁', svg: databaseSvg(14), title: 'Token', label: tokensLabel(totals) })
+    }
+    segments.push({ id: 'context', glyph: '◔', svg: ringSvg(14, percentOf(current)), title: '上下文', label: contextLabel(current) })
+
+    // The open one draws at full strength, the rest dim: the capsule's selection.
+    const capsule = (
+      <Box flexDirection="row" alignItems="center" alignSelf="center" gap={1} borderStyle="round" borderDimColor paddingX={1}>
+        {segments.flatMap((s, i) => [
+          ...(i > 0 ? [<Text dimColor>│</Text>] : []),
           <Box flexDirection="row" alignItems="center" gap={1}>
-            {icon('◷', gaugeSvg(14), '用时与速度')}
-            <Button key="stats" plain dimColor label={turnsLabel(totals)} onPress={toggle('stats')} />
-          </Box>
-        )}
-        {hasTotals && (
-          <Box flexDirection="row" alignItems="center" gap={1}>
-            {icon('⛁', databaseSvg(14), 'Token')}
-            <Button key="tokens" plain dimColor label={tokensLabel(totals)} onPress={toggle('tokens')} />
-          </Box>
-        )}
-        <Box flexDirection="row" alignItems="center" gap={1}>
-          {icon('◔', ringSvg(14, percentOf(current)), '上下文')}
-          <Button key="context" plain dimColor label={contextLabel(current)} onPress={toggle('context')} />
-        </Box>
+            {Svg ? <Svg source={s.svg} alt={s.title} width={14} height={14} /> : <Text dimColor>{s.glyph}</Text>}
+            <Button key={s.id} plain dimColor={open !== s.id} label={s.label} onPress={toggle(s.id)} />
+          </Box>,
+        ])}
       </Box>
     )
 
-    let card: unknown = null
-    if (open === 'stats' && hasTotals) {
-      card = panel(el, gaugeSvg(16), '用时与速度', rows(el, timingRows(totals)), close)
-    } else if (open === 'tokens' && hasTotals) {
-      card = panel(el, databaseSvg(16), 'Token', rows(el, tokenRows(totals)), close)
-    } else if (open === 'context') {
-      const { context } = await $.session.usage({ breakdown: 'summary' })
-      card = panel(el, ringSvg(16, percentOf(current)), '上下文', contextRows(el, current, context.breakdown), close)
+    const index = segments.findIndex(s => s.id === open)
+    if (index < 0) {
+      return (
+        <Box flexDirection="row" justifyContent="center">
+          {capsule}
+        </Box>
+      )
     }
 
-    return card === null ? (
-      line
-    ) : (
-      <Box flexDirection="column">
-        {card}
-        {line}
+    const segment = segments[index]!
+    let body: unknown[]
+    if (segment.id === 'context') {
+      const { context } = await $.session.usage({ breakdown: 'summary' })
+      body = contextRows(el, current, context.breakdown)
+    } else {
+      body = rows(el, segment.id === 'stats' ? timingRows(totals!) : tokenRows(totals!))
+    }
+
+    // Over its own figure: the first card flush with the capsule's left edge, the last with its
+    // right, a middle one centered, the column as wide as the wider of the two.
+    const align = index === 0 && segments.length > 1 ? 'flex-start' : index === segments.length - 1 && segments.length > 1 ? 'flex-end' : 'center'
+
+    return (
+      <Box flexDirection="row" justifyContent="center">
+        <Box flexDirection="column">
+          <Box flexDirection="row" justifyContent={align}>
+            {card(el, segment.svg, segment.title, body, close)}
+          </Box>
+          {capsule}
+        </Box>
       </Box>
     )
   })
 }
 
-// The card of one figure, right-aligned above the row.
-const panel = ({ Box, Text, Button, Svg }: Elements, svg: string, title: string, body: unknown[], close: () => void) => (
-  <Box flexDirection="row" justifyContent="flex-end">
-    <Box flexDirection="column" width={40} borderStyle="round" borderDimColor paddingX={1}>
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        {Svg ? <Svg source={svg} alt={title} width={16} height={16} /> : null}
-        <Text bold>{title}</Text>
-        <Box flexGrow={1} />
-        <Button key="close" plain dimColor role="dismiss" label="×" onPress={close} />
-      </Box>
-      {body}
+// One figure's card: a rounded panel, the icon and title over its rows, × to close.
+const card = ({ Box, Text, Button, Svg }: Elements, svg: string, title: string, body: unknown[], close: () => void) => (
+  <Box flexDirection="column" width={36} borderStyle="round" borderDimColor paddingX={1}>
+    <Box flexDirection="row" alignItems="center" gap={1}>
+      {Svg ? <Svg source={svg} alt={title} width={16} height={16} /> : null}
+      <Text weight="medium">{title}</Text>
+      <Box flexGrow={1} />
+      <Button key="close" plain dimColor role="dismiss" label="×" onPress={close} />
     </Box>
+    {body}
   </Box>
 )
 
@@ -277,7 +286,7 @@ const rows = ({ Box, Text }: Elements, list: [string, string][]) =>
   list.map(([name, value]) => (
     <Box flexDirection="row" justifyContent="space-between">
       <Text dimColor>{name}</Text>
-      <Text>{value}</Text>
+      <Text tabular>{value}</Text>
     </Box>
   ))
 
@@ -298,7 +307,7 @@ const contextRows = (el: Elements, current: Fill, breakdown: SessionContextBreak
         <Text dimColor>{c.name}</Text>
         <Box flexDirection="row" alignItems="center" gap={1}>
           {Svg ? <Svg source={barSvg(c.tokens / whole)} alt={c.name} width={60} height={6} /> : null}
-          <Text>{compact(c.tokens)}</Text>
+          <Text tabular>{compact(c.tokens)}</Text>
         </Box>
       </Box>
     )),
