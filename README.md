@@ -1,18 +1,19 @@
 # context-meter
 
-A Claude Code plugin that shows the live context window usage in the prompt footer, beside the mode labels:
+A Claude Code plugin that adds session figures to the prompt footer, beside the mode labels:
 
 ```
-Context 42% · 84k / 200k
+◷ 4 轮·48 步 · 215 tok/s   ⛁ 3.6M tok · 缓存 94.01%   ◔ 42%
 ```
 
-Before it, totals for the session's main loop: turns and model steps, decode speed, all tokens sent and received, and the prompt cache hit rate:
+Turns and model steps with decode speed, all tokens sent and received with the prompt cache hit rate, and the context window fill, rightmost. The desktop app draws the icons as vector images (the ring fills with the context and turns red past 80%); the terminal draws the glyphs above.
 
-```
-4 轮·48 步 · 215 tok/s · 3.6M tok · 缓存命中 94.01% · Context 42% · 84k / 200k
-```
+Click a figure for its floating card above the footer; click it again, or ×, to close:
 
-Click the totals to open a pane with turns, steps, LLM time, tool time (a permission prompt's wait counts), average time per step and to first token, decode speed and the token split. Click the context figure to open a pane with the window broken down by category, as `/context` does. `/clear` starts the totals over.
+- the timings card: turns, steps, LLM time, tool time (a permission prompt's wait counts), average time per step and to first token, decode speed, and the token split (input, cache reads and writes, output).
+- the context card: tokens used and the window, the model, and the window by category as `/context` breaks it down.
+
+Totals count the session's main loop; `/clear` starts them over.
 
 It updates after every model response. Before the first response of a session (or right after a compaction) it shows the window alone: `Context — / 200k`.
 
