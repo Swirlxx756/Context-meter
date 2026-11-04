@@ -51,15 +51,6 @@ const hitRate = (s: Stats) => {
 
 const totalTokens = (s: Stats) => prompted(s) + s.outputTokens
 
-// `135tok/s 18.2M(98.71%) 28%`: before any response the context figure alone.
-const footerLabel = (current: Fill, s: Stats | null) => {
-  const percent = percentOf(current)
-  const context = percent === undefined ? '—' : `${percent}%`
-  if (s === null || s.steps === 0) return context
-  const rate = s.decodeMs > 0 ? `${Math.round((s.outputTokens * 1000) / s.decodeMs)}tok/s ` : ''
-  return `${rate}${compact(totalTokens(s))}(${hitRate(s)}) ${context}`
-}
-
 const turnsLabel = (s: Stats) => `${s.turns} 轮·${s.steps} 步 · ${speed(s)}`
 
 const tokensLabel = (s: Stats) => `${compact(totalTokens(s))} tok · 缓存命中 ${hitRate(s)}`
@@ -203,7 +194,7 @@ export const register: Register = on => {
 
   // The pointer over a figure's Client shows its card; leaving it hides the card again.
   on('ui.message', async ($, e, next) => {
-    const match = /^segment-(stats|tokens|context|all)$/.exec(e.element)
+    const match = /^segment-(stats|tokens|context)$/.exec(e.element)
     const hover = (e.data as { hover?: boolean } | null)?.hover
     if (match && hover !== undefined) {
       const which = match[1] as Section
@@ -213,107 +204,84 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // The desktop draws no hint line, and the band above the prompt comes in a grey panel of its
-  // own: so a short figure sits in the footer, beside the mode labels, and the band holds the
-  // cards only while the pointer is over that figure. The footer's slot is short, cut with an
-  // ellipsis: hence one compact line.
-  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
-    const current = await read($, fill)
-
-    if (current === null) {
-      return next(e)
-    }
-
-    const { Box, Text, Client } = $.ui.resolve(e) as unknown as Elements
-    const modes = e.props.modes.join(' & ')
-    const open = await read($, opened)
-
-    return (
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        {modes !== '' && <Text dimColor>{modes}</Text>}
-        <Client key="segment-all" module="./segment.tsx" props={{ label: footerLabel(current, await read($, stats)), isActive: open === 'all' }} />
-      </Box>
-    )
-  })
-
+  // One row above the prompt, centered (the footer's slot is short and cut with an ellipsis): the
+  // figures, each one showing its card right above itself while the pointer is over it.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, fill)
+    const totals = await read($, stats)
 
     if (e.props.hasSurvey || current === null) {
       return next(e)
     }
 
-    const el = elementsFor($, e)
-    const { Box } = el
-    const totals = await read($, stats)
+    // The terminal's table answers Svg with a stand-in that draws nothing: it gets glyphs instead.
+    const resolved = $.ui.resolve(e) as unknown as Elements
+    const el: Elements = e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
+    const { Box, Text, Button, Svg, Client } = el
+    // A Client draws plain text and hears the pointer; where none is drawn (VS Code, mobile), a Button.
+    const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
     const open = await read($, opened)
-    const segments = segmentsOf(current, totals)
-    // Where the footer holds the figure (terminal, desktop) the band shows the cards while it is
-    // hovered, and nothing else; elsewhere (VS Code, mobile) the row stays here, opened on a click.
-    const hasFooter = e.surface === 'terminal' || e.surface === 'desktop'
     const toggle = (which: Section) => () => void update($, opened, now => (now === which ? null : which))
     const close = () => void update($, opened, () => null)
-    const bodyOf = async (segment: Segment): Promise<unknown[]> => {
-      if (segment.id !== 'context') return rows(el, segment.id === 'stats' ? timingRows(totals!) : tokenRows(totals!))
-      const { context } = await $.session.usage({ breakdown: 'summary' })
-      return contextRows(el, current, context.breakdown)
-    }
+    const hasTotals = totals !== null && totals.steps > 0
 
-    if (hasFooter) {
-      if (open !== 'all') return next(e)
-      // Every card side by side, at the right, under which the footer's figure sits.
-      const cards: unknown[] = []
-      for (const segment of segments) cards.push(card(el, segment.svg, segment.title, await bodyOf(segment)))
+    const segments: { id: Section; glyph: string; svg: string; title: string; label: string }[] = []
+    if (hasTotals) {
+      segments.push({ id: 'stats', glyph: '◷', svg: gaugeSvg(14), title: '用时与速度', label: turnsLabel(totals) })
+      segments.push({ id: 'tokens', glyph: '⛁', svg: databaseSvg(14), title: 'Token', label: tokensLabel(totals) })
+    }
+    segments.push({ id: 'context', glyph: '◔', svg: ringSvg(14, percentOf(current)), title: '上下文', label: contextLabel(current) })
+
+    // The open one draws at full strength, the rest dim: the row's selection.
+    const capsule = (
+      <Box flexDirection="row" alignItems="center" alignSelf="center" columnGap={3}>
+        {segments.map(s => (
+          <Box flexDirection="row" alignItems="center" gap={1}>
+            {Svg ? <Svg source={s.svg} alt={s.title} width={14} height={14} /> : <Text dimColor>{s.glyph}</Text>}
+            {hasClient ? (
+              <Client key={`segment-${s.id}`} module="./segment.tsx" props={{ label: s.label, isActive: open === s.id }} />
+            ) : (
+              <Button key={s.id} plain dimColor={open !== s.id} label={s.label} onPress={toggle(s.id)} />
+            )}
+          </Box>
+        ))}
+      </Box>
+    )
+
+    const index = segments.findIndex(s => s.id === open)
+    if (index < 0) {
       return (
-        <Box flexDirection="row" justifyContent="flex-end" flexWrap="wrap" columnGap={2} rowGap={1}>
-          {cards}
+        <Box flexDirection="row" justifyContent="center">
+          {capsule}
         </Box>
       )
     }
 
-    const segment = segments.find(s => s.id === open)
-    if (segment === undefined) {
-      return <Box flexDirection="row" justifyContent="center">{row(el, segments, open, toggle)}</Box>
+    const segment = segments[index]!
+    let body: unknown[]
+    if (segment.id === 'context') {
+      const { context } = await $.session.usage({ breakdown: 'summary' })
+      body = contextRows(el, current, context.breakdown)
+    } else {
+      body = rows(el, segment.id === 'stats' ? timingRows(totals!) : tokenRows(totals!))
     }
 
+    // Over its own figure: the first card flush with the capsule's left edge, the last with its
+    // right, a middle one centered, the column as wide as the wider of the two.
+    const align = index === 0 && segments.length > 1 ? 'flex-start' : index === segments.length - 1 && segments.length > 1 ? 'flex-end' : 'center'
+
     return (
-      <Box flexDirection="column" alignItems="center">
-        {card(el, segment.svg, segment.title, await bodyOf(segment), close)}
-        {row(el, segments, open, toggle)}
+      <Box flexDirection="row" justifyContent="center">
+        <Box flexDirection="column">
+          <Box flexDirection="row" justifyContent={align}>
+            {card(el, segment.svg, segment.title, body, hasClient ? undefined : close)}
+          </Box>
+          {capsule}
+        </Box>
       </Box>
     )
   })
 }
-
-type Segment = { id: Section; glyph: string; svg: string; title: string; label: string }
-
-const segmentsOf = (current: Fill, totals: Stats | null): Segment[] => {
-  const segments: Segment[] = []
-  if (totals !== null && totals.steps > 0) {
-    segments.push({ id: 'stats', glyph: '◷', svg: gaugeSvg(14), title: '用时与速度', label: turnsLabel(totals) })
-    segments.push({ id: 'tokens', glyph: '⛁', svg: databaseSvg(14), title: 'Token', label: tokensLabel(totals) })
-  }
-  segments.push({ id: 'context', glyph: '◔', svg: ringSvg(14, percentOf(current)), title: '上下文', label: contextLabel(current) })
-  return segments
-}
-
-// The terminal's table answers Svg with a stand-in that draws nothing: it gets glyphs instead.
-const elementsFor = ($: { ui: { resolve: (e: never) => unknown } }, e: { surface: string }): Elements => {
-  const resolved = $.ui.resolve(e as never) as Elements
-  return e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
-}
-
-// The figures, each led by its icon, as Buttons pressed to open their card (VS Code, mobile).
-const row = ({ Box, Text, Button, Svg }: Elements, segments: Segment[], open: Section | null, toggle: (which: Section) => () => void) => (
-  <Box flexDirection="row" alignItems="center" columnGap={3}>
-    {segments.map(s => (
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        {Svg ? <Svg source={s.svg} alt={s.title} width={14} height={14} /> : <Text dimColor>{s.glyph}</Text>}
-        <Button key={s.id} plain dimColor={open !== s.id} label={s.label} onPress={toggle(s.id)} />
-      </Box>
-    ))}
-  </Box>
-)
 
 // One figure's card: a rounded panel, the icon and title over its rows; × where it opened on a click.
 const card = ({ Box, Text, Button, Svg }: Elements, svg: string, title: string, body: unknown[], close?: () => void) => (

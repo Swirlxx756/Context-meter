@@ -1,12 +1,14 @@
 # context-meter
 
-A Claude Code plugin that adds one compact figure to the prompt footer, beside the mode labels:
+A Claude Code plugin that adds a row of session figures above the prompt, centered:
 
 ```
-135tok/s 18.2M(98.71%) 28%
+◷ 4 轮·48 步 · 215 tok/s   ⛁ 3.6M tok · 缓存命中 94.01%   ◔ Context 42% · 84k / 200k
 ```
 
-Decode speed, all tokens sent and received with the prompt cache hit rate, and the context window fill. Point at it and three cards show above the prompt; move away and they hide. (VS Code and the mobile app, which draw no footer figure, show a row of the figures above the prompt instead, each opening its card on a click, with × to close.)
+Turns and model steps with decode speed; all tokens sent and received with the prompt cache hit rate; the context window fill. The desktop app draws the icons as vector images (the ring fills with the context and turns red past 80%); the terminal draws the glyphs above. Before the first response the row shows the window alone.
+
+Point at a figure and its card shows right above it; move away and it hides. (VS Code and the mobile app, which draw no `Client`, open it on a click instead, with × to close.)
 
 - 用时与速度: turns, steps, LLM time, tool time (a permission prompt's wait counts), average time per step and to first token, decode speed.
 - Token: total, input, cache reads and writes, output, cache hit rate.
