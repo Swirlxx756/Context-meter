@@ -11,9 +11,15 @@ const drawModes = (on: On) => {
 
     return <Text>{e.props.modes.join(' & ')}</Text>
   })
+  // And for the empty band above the prompt.
+  on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+    const { Box } = $.ui.resolve(e)
+
+    return <Box />
+  })
 }
 
-test('the footer gains the context fill, a ring icon on desktop and a glyph on the terminal', async ($, on) => {
+test('the footer gains the context fill on every surface', async ($, on) => {
   drawModes(on)
 
   await $.session.measure({
@@ -25,12 +31,7 @@ test('the footer gains the context fill, a ring icon on desktop and a glyph on t
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'context-meter', surface, ...footer(['focus']) })
     expect(await ui.find({ type: 'Text', text: 'focus' })).toBeDefined()
-    expect((await ui.find({ key: 'context' }))?.text).toBe('42%')
-    if (surface === 'desktop') {
-      expect((await ui.find({ type: 'Svg' }))?.props.alt).toBe('ring')
-    } else {
-      expect(await ui.find({ type: 'Text', text: '◔' })).toBeDefined()
-    }
+    expect((await ui.find({ key: 'meter' }))?.text).toBe('42%')
     await ui.unmount()
   }
 })
@@ -41,9 +42,11 @@ test('before any response the footer shows a dash', async ($, on) => {
   await $.session.measure({ context: { window: 1_000_000 }, rateLimits: [], changed: ['context'] })
 
   const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...footer([]) })
-  expect((await ui.find({ key: 'context' }))?.text).toBe('—')
+  expect((await ui.find({ key: 'meter' }))?.text).toBe('—')
   await ui.unmount()
 })
+
+const BAND = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: { offset: 0, bodyRows: 20 }, view: {} }
 
 const usage = (input: number, output: number, cacheRead: number, cacheWrite: number) => ({
   model: 'claude-opus-5-5',
@@ -53,7 +56,7 @@ const usage = (input: number, output: number, cacheRead: number, cacheWrite: num
   cache_creation_input_tokens: cacheWrite,
 })
 
-test('the footer adds turns, speed, tokens and cache hits; a click toggles their floating card', async ($, on) => {
+test('the footer adds turns, speed, tokens and cache hits; a click opens the card above the prompt', async ($, on) => {
   drawModes(on)
   const clock = mock.clock(on)
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] } }))
@@ -93,24 +96,22 @@ test('the footer adds turns, speed, tokens and cache hits; a click toggles their
   await $.tool.call({ tool: 'Bash', command: 'ls' })
 
   const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...footer([]) })
-  expect((await ui.find({ key: 'stats' }))?.text).toBe('1 轮·2 步 · 200 tok/s')
-  expect((await ui.find({ key: 'tokens' }))?.text).toBe('20k tok · 缓存 94.00%')
-  expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
+  expect((await ui.find({ key: 'meter' }))?.text).toBe('200tok/s 20k tok(94.00%) 42%')
 
-  await ui.press({ key: 'stats' })
-  expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '6.0s' })).toBeDefined() // LLM: two 3 s requests
-  expect(await ui.find({ type: 'Text', text: '4.0s' })).toBeDefined() // tool
-  expect(await ui.find({ type: 'Text', text: '2.0s' })).toBeDefined() // first token
-  expect(await ui.find({ type: 'Text', text: '19k' })).toBeDefined() // cache reads
+  const band = { plugin: 'context-meter', surface: 'desktop', component: 'AbovePrompt', props: BAND } as const
+  const closed = await $.ui.mount(band)
+  expect(await closed.find({ type: 'Text', text: '会话统计' })).toBeUndefined()
+  await closed.unmount()
 
-  // The same figure closes it; the context figure swaps in its own card.
-  await ui.press({ key: 'stats' })
-  expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
-  await ui.press({ key: 'context' })
-  expect(await ui.find({ type: 'Text', text: '上下文' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeDefined()
-  await ui.press({ key: 'close' })
-  expect(await ui.find({ type: 'Text', text: '上下文' })).toBeUndefined()
+  // A click on the footer opens the card above the prompt; × closes it.
+  await ui.press({ key: 'meter' })
+  const card = await $.ui.mount(band)
+  for (const text of ['会话统计', '用时与速度', 'Token', '上下文', '6.0s', '4.0s', '2.0s', '19k', '84k (42%)']) {
+    expect(await card.find({ type: 'Text', text })).toBeDefined()
+  }
+  expect((await card.find({ type: 'Svg' }))?.props.alt).toBe('用时与速度')
+  await card.press({ key: 'close' })
+  expect(await card.find({ type: 'Text', text: '会话统计' })).toBeUndefined()
+  await card.unmount()
   await ui.unmount()
 })

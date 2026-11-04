@@ -22,11 +22,8 @@ export type Stats = {
   cacheWrite: number
 }
 
-/** Which floating card the footer shows, if any. */
-export type Popover = 'stats' | 'context'
-
 declare module 'claude-code' {
   interface PluginState {
-    'context-meter': { fill: Fill | null; stats: Stats | null; popover: Popover | null }
+    'context-meter': { fill: Fill | null; stats: Stats | null; /** Whether the footer has the stats card open above the prompt. */ isOpen: boolean }
   }
 }

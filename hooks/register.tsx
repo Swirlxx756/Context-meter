@@ -1,11 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionContextBreakdown, TurnUsage } from 'claude-code'
 
-import type { Fill, Popover, Stats } from '../types'
+import type { Fill, Stats } from '../types'
 
 const fill = atom({ plugin: 'context-meter', key: 'fill' } as const, null)
 const stats = atom({ plugin: 'context-meter', key: 'stats' } as const, null)
-const popover = atom({ plugin: 'context-meter', key: 'popover' } as const, null)
+const isOpen = atom({ plugin: 'context-meter', key: 'isOpen' } as const, false)
 
 const fresh = (startedAt: number): Stats => ({
   startedAt,
@@ -51,15 +51,18 @@ const hitRate = (s: Stats) => {
 
 const totalTokens = (s: Stats) => prompted(s) + s.outputTokens
 
-const turnsLabel = (s: Stats) => `${s.turns} 轮·${s.steps} 步 · ${speed(s)}`
-
-const tokensLabel = (s: Stats) => `${compact(totalTokens(s))} tok · 缓存 ${hitRate(s)}`
+// `132tok/s 3.5M tok(96.12%) 19%`: before any response the context figure alone.
+const footerLabel = (current: Fill, s: Stats | null) => {
+  const context = contextLabel(current)
+  if (s === null || s.steps === 0) return context
+  const rate = s.decodeMs > 0 ? `${Math.round((s.outputTokens * 1000) / s.decodeMs)}tok/s ` : ''
+  return `${rate}${compact(totalTokens(s))} tok(${hitRate(s)}) ${context}`
+}
 
 // Vector icons for the surfaces that draw Svg (desktop, VS Code, mobile); a glyph stands in on the terminal.
 // A mid grey reads on light and dark alike, since an Svg is drawn as an image and inherits no text color.
 const GREY = '#8b8b8b'
 const ACCENT = '#d97757'
-const RULE = '─'.repeat(32)
 
 const gaugeSvg = (size: number) =>
   `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 16 16" fill="none" stroke="${GREY}" stroke-width="1.5" stroke-linecap="round"><path d="M2.5 11.5a5.5 5.5 0 1 1 11 0"/><path d="M8 11.5l2.6-3.4"/><circle cx="8" cy="11.5" r="0.9" fill="${GREY}" stroke="none"/></svg>`
@@ -80,8 +83,6 @@ const barSvg = (fraction: number) => {
   const w = Math.max(2, Math.min(60, fraction * 60)).toFixed(1)
   return `<svg xmlns="http://www.w3.org/2000/svg" width="60" height="6" viewBox="0 0 60 6"><rect width="60" height="6" rx="3" fill="${GREY}" fill-opacity="0.25"/><rect width="${w}" height="6" rx="3" fill="${ACCENT}"/></svg>`
 }
-
-const GLYPH = { gauge: '◷', database: '⛁', ring: '◔' } as const
 
 const timingRows = (s: Stats): [string, string][] => [
   ['轮次', `${s.turns}`],
@@ -195,76 +196,79 @@ export const register: Register = on => {
     }
   })
 
+  // The footer slot is a short one the app cuts with an ellipsis: one compact control, nothing more.
   on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
     const current = await read($, fill)
     const totals = await read($, stats)
-    const open = await read($, popover)
 
     if (current === null) {
       return next(e)
     }
 
     // A tree of our own: the desktop footer draws a hook's tree, not a rewritten `modes`.
-    // The terminal's table answers Svg with a stand-in that draws nothing: it gets glyphs instead.
-    const resolved = $.ui.resolve(e) as unknown as Elements
-    const el: Elements = e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
-    const { Box, Text, Button, Svg } = el
-    const icon = (name: keyof typeof GLYPH, svg: string) =>
-      Svg ? <Svg source={svg} alt={name} width={14} height={14} /> : <Text dimColor>{GLYPH[name]}</Text>
-    const toggle = (which: Popover) => () => void update($, popover, now => (now === which ? null : which))
-    const close = () => void update($, popover, () => null)
+    const { Box, Text, Button } = $.ui.resolve(e)
     const modes = e.props.modes.join(' & ')
 
-    let card: unknown = null
-    if (open === 'stats' && totals !== null) {
-      card = statsCard(el, totals, close)
-    } else if (open === 'context') {
-      const { context } = await $.session.usage({ breakdown: 'summary' })
-      card = contextCard(el, current, context.breakdown, close)
+    return (
+      <Box flexDirection="row" gap={1}>
+        {modes !== '' && <Text dimColor>{modes}</Text>}
+        <Button
+          key="meter"
+          plain
+          dimColor
+          label={footerLabel(current, totals)}
+          onPress={() => void update($, isOpen, now => !now)}
+        />
+      </Box>
+    )
+  })
+
+  // The card everything is in: drawn above the prompt, at full width, while the footer has it open.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const current = await read($, fill)
+    const totals = await read($, stats)
+
+    if (e.props.hasSurvey || current === null || !(await read($, isOpen))) {
+      return next(e)
     }
 
-    // Each figure is its own control: a click toggles its floating card. Context sits rightmost.
+    // The terminal's table answers Svg with a stand-in that draws nothing: it gets no icons.
+    const resolved = $.ui.resolve(e) as unknown as Elements
+    const el: Elements = e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
+    const { Box, Text, Button } = el
+    const { context } = await $.session.usage({ breakdown: 'summary' })
+
+    const columns: unknown[] = []
+    if (totals !== null) {
+      columns.push(column(el, gaugeSvg(14), '用时与速度', rows(el, timingRows(totals))))
+      columns.push(column(el, databaseSvg(14), 'Token', rows(el, tokenRows(totals))))
+    }
+    columns.push(column(el, ringSvg(14, percentOf(current)), '上下文', contextRows(el, current, context.breakdown)))
+
     return (
-      <Box flexDirection="row" alignItems="center" gap={1}>
-        {modes !== '' && <Text dimColor>{modes}</Text>}
-        {totals !== null && icon('gauge', gaugeSvg(14))}
-        {totals !== null && <Button key="stats" plain dimColor label={turnsLabel(totals)} onPress={toggle('stats')} />}
-        {totals !== null && icon('database', databaseSvg(14))}
-        {totals !== null && <Button key="tokens" plain dimColor label={tokensLabel(totals)} onPress={toggle('stats')} />}
-        {icon('ring', ringSvg(14, percentOf(current)))}
-        <Button key="context" plain dimColor label={contextLabel(current)} onPress={toggle('context')} />
-        {card}
+      <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
+        <Box flexDirection="row" justifyContent="space-between">
+          <Text bold>会话统计</Text>
+          <Button key="close" plain dimColor role="dismiss" label="×" onPress={() => void update($, isOpen, () => false)} />
+        </Box>
+        <Box flexDirection="row" flexWrap="wrap" columnGap={4} rowGap={1}>
+          {columns}
+        </Box>
       </Box>
     )
   })
 }
 
-// The element constructors a footer drawing uses; Svg exists on the desktop, VS Code and mobile tables.
+// The element constructors a drawing uses; Svg exists on the desktop, VS Code and mobile tables.
 type Elements = { Box: any; Text: any; Button: any; Svg?: any }
 
-// The floating card: out of the flow, above the footer's right edge, opaque over the transcript.
-const floating = (Box: any, children: unknown[]) => (
-  <Box
-    position="absolute"
-    bottom={1}
-    right={0}
-    width={36}
-    flexDirection="column"
-    borderStyle="round"
-    borderDimColor
-    backgroundColor="inverseText"
-    paddingX={1}
-  >
-    {children}
-  </Box>
-)
-
-const header = ({ Box, Text, Button, Svg }: Elements, svg: string, title: string, close: () => void) => (
-  <Box flexDirection="row" alignItems="center" gap={1}>
-    {Svg ? <Svg source={svg} alt={title} width={16} height={16} /> : null}
-    <Text bold>{title}</Text>
-    <Box flexGrow={1} />
-    <Button key="close" plain dimColor role="dismiss" label="×" onPress={close} />
+const column = ({ Box, Text, Svg }: Elements, svg: string, title: string, body: unknown[]) => (
+  <Box flexDirection="column" width={30}>
+    <Box flexDirection="row" alignItems="center" gap={1}>
+      {Svg ? <Svg source={svg} alt={title} width={14} height={14} /> : null}
+      <Text bold>{title}</Text>
+    </Box>
+    {body}
   </Box>
 )
 
@@ -276,30 +280,18 @@ const rows = ({ Box, Text }: Elements, list: [string, string][]) =>
     </Box>
   ))
 
-const rule = ({ Text }: Elements) => <Text dimColor>{RULE}</Text>
-
-const statsCard = (el: Elements, s: Stats, close: () => void) =>
-  floating(el.Box, [
-    header(el, gaugeSvg(16), '用时与速度', close),
-    ...rows(el, timingRows(s)),
-    rule(el),
-    ...rows(el, tokenRows(s)),
-  ])
-
-const contextCard = (el: Elements, current: Fill, breakdown: SessionContextBreakdown | undefined, close: () => void) => {
+const contextRows = (el: Elements, current: Fill, breakdown: SessionContextBreakdown | undefined) => {
   const { Box, Text, Svg } = el
   const head: [string, string][] = [
     ['已用', current.tokens === undefined ? '—' : `${compact(current.tokens)} (${current.percent ?? 0}%)`],
     ['窗口', compact(current.window)],
   ]
   if (breakdown) head.push(['模型', breakdown.model])
-  const categories = (breakdown?.categories ?? []).filter(c => c.tokens > 0)
   const whole = breakdown?.rawMaxTokens ?? current.window
+  const categories = (breakdown?.categories ?? []).filter(c => c.tokens > 0)
 
-  return floating(Box, [
-    header(el, ringSvg(16, percentOf(current)), '上下文', close),
+  return [
     ...rows(el, head),
-    ...(categories.length > 0 ? [rule(el)] : []),
     ...categories.map(c => (
       <Box flexDirection="row" justifyContent="space-between" alignItems="center">
         <Text dimColor>{c.name}</Text>
@@ -309,5 +301,5 @@ const contextCard = (el: Elements, current: Fill, breakdown: SessionContextBreak
         </Box>
       </Box>
     )),
-  ])
+  ]
 }

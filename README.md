@@ -1,19 +1,20 @@
 # context-meter
 
-A Claude Code plugin that adds session figures to the prompt footer, beside the mode labels:
+A Claude Code plugin that adds one compact figure to the prompt footer, beside the mode labels:
 
 ```
-◷ 4 轮·48 步 · 215 tok/s   ⛁ 3.6M tok · 缓存 94.01%   ◔ 42%
+132tok/s 3.5M tok(96.12%) 19%
 ```
 
-Turns and model steps with decode speed, all tokens sent and received with the prompt cache hit rate, and the context window fill, rightmost. The desktop app draws the icons as vector images (the ring fills with the context and turns red past 80%); the terminal draws the glyphs above.
+Decode speed, all tokens sent and received with the prompt cache hit rate, and the context window fill. Before the first response it shows the fill alone (`—` until one lands).
 
-Click a figure for its floating card above the footer; click it again, or ×, to close:
+Click it to open a card above the prompt with everything; click it again, or ×, to close:
 
-- the timings card: turns, steps, LLM time, tool time (a permission prompt's wait counts), average time per step and to first token, decode speed, and the token split (input, cache reads and writes, output).
-- the context card: tokens used and the window, the model, and the window by category as `/context` breaks it down.
+- 用时与速度: turns, steps, LLM time, tool time (a permission prompt's wait counts), average time per step and to first token, decode speed.
+- Token: total, input, cache reads and writes, output, cache hit rate.
+- 上下文: tokens used and the window, the model, and the window by category as `/context` breaks it down.
 
-Totals count the session's main loop; `/clear` starts them over.
+The desktop app draws an icon beside each heading and a bar beside each category. Totals count the session's main loop; `/clear` starts them over.
 
 It updates after every model response. Before the first response of a session (or right after a compaction) it shows the window alone: `Context — / 200k`.
 
