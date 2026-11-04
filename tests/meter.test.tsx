@@ -1,7 +1,8 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
 
-const footer = (modes: string[]) => ({ component: 'SessionMode', props: { modes } }) as const
+const BAND = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: { offset: 0, bodyRows: 20 }, view: {} }
+const above = { component: 'AbovePrompt', props: BAND } as const
 
 // Stands for the engine's footer: draws the modes it is handed, joined as the engine joins them.
 const drawModes = (on: On) => {
@@ -19,7 +20,7 @@ const drawModes = (on: On) => {
   })
 }
 
-test('the footer gains the context fill on every surface', async ($, on) => {
+test('the row above the prompt shows the context fill on every surface', async ($, on) => {
   drawModes(on)
 
   await $.session.measure({
@@ -29,24 +30,21 @@ test('the footer gains the context fill on every surface', async ($, on) => {
   })
 
   for (const surface of ['terminal', 'desktop'] as const) {
-    const ui = await $.ui.mount({ plugin: 'context-meter', surface, ...footer(['focus']) })
-    expect(await ui.find({ type: 'Text', text: 'focus' })).toBeDefined()
+    const ui = await $.ui.mount({ plugin: 'context-meter', surface, ...above })
     expect((await ui.find({ key: 'meter' }))?.text).toBe('42%')
     await ui.unmount()
   }
 })
 
-test('before any response the footer shows a dash', async ($, on) => {
+test('before any response the row shows a dash', async ($, on) => {
   drawModes(on)
 
   await $.session.measure({ context: { window: 1_000_000 }, rateLimits: [], changed: ['context'] })
 
-  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...footer([]) })
+  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
   expect((await ui.find({ key: 'meter' }))?.text).toBe('—')
   await ui.unmount()
 })
-
-const BAND = { hasSurvey: false, isWorking: false, maxRows: 20, bodyColumns: 120, scroll: { offset: 0, bodyRows: 20 }, view: {} }
 
 const usage = (input: number, output: number, cacheRead: number, cacheWrite: number) => ({
   model: 'claude-opus-5-5',
@@ -56,7 +54,7 @@ const usage = (input: number, output: number, cacheRead: number, cacheWrite: num
   cache_creation_input_tokens: cacheWrite,
 })
 
-test('the footer adds turns, speed, tokens and cache hits; a click opens the card above the prompt', async ($, on) => {
+test('the footer adds turns, speed, tokens and cache hits; a click opens the card', async ($, on) => {
   drawModes(on)
   const clock = mock.clock(on)
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] } }))
@@ -95,23 +93,20 @@ test('the footer adds turns, speed, tokens and cache hits; a click opens the car
   }
   await $.tool.call({ tool: 'Bash', command: 'ls' })
 
-  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...footer([]) })
+  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
   expect((await ui.find({ key: 'meter' }))?.text).toBe('200tok/s 20k tok(94.00%) 42%')
+  expect(await ui.find({ type: 'Text', text: '会话统计' })).toBeUndefined()
 
-  const band = { plugin: 'context-meter', surface: 'desktop', component: 'AbovePrompt', props: BAND } as const
-  const closed = await $.ui.mount(band)
-  expect(await closed.find({ type: 'Text', text: '会话统计' })).toBeUndefined()
-  await closed.unmount()
-
-  // A click on the footer opens the card above the prompt; × closes it.
+  // A click on the row opens the card above it; the same row, or ×, closes it.
   await ui.press({ key: 'meter' })
-  const card = await $.ui.mount(band)
   for (const text of ['会话统计', '用时与速度', 'Token', '上下文', '6.0s', '4.0s', '2.0s', '19k', '84k (42%)']) {
-    expect(await card.find({ type: 'Text', text })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text })).toBeDefined()
   }
-  expect((await card.find({ type: 'Svg' }))?.props.alt).toBe('用时与速度')
-  await card.press({ key: 'close' })
-  expect(await card.find({ type: 'Text', text: '会话统计' })).toBeUndefined()
-  await card.unmount()
+  expect(await ui.find({ key: 'meter' })).toBeDefined()
+  await ui.press({ key: 'meter' })
+  expect(await ui.find({ type: 'Text', text: '会话统计' })).toBeUndefined()
+  await ui.press({ key: 'meter' })
+  await ui.press({ key: 'close' })
+  expect(await ui.find({ type: 'Text', text: '会话统计' })).toBeUndefined()
   await ui.unmount()
 })

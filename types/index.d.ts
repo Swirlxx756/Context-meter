@@ -24,6 +24,6 @@ export type Stats = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'context-meter': { fill: Fill | null; stats: Stats | null; /** Whether the footer has the stats card open above the prompt. */ isOpen: boolean }
+    'context-meter': { fill: Fill | null; stats: Stats | null; /** Whether the stats card is open above the prompt. */ isOpen: boolean }
   }
 }

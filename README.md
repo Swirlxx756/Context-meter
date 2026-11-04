@@ -1,6 +1,6 @@
 # context-meter
 
-A Claude Code plugin that adds one compact figure to the prompt footer, beside the mode labels:
+A Claude Code plugin that adds one compact row above the prompt, right-aligned:
 
 ```
 132tok/s 3.5M tok(96.12%) 19%
@@ -8,7 +8,7 @@ A Claude Code plugin that adds one compact figure to the prompt footer, beside t
 
 Decode speed, all tokens sent and received with the prompt cache hit rate, and the context window fill. Before the first response it shows the fill alone (`—` until one lands).
 
-Click it to open a card above the prompt with everything; click it again, or ×, to close:
+Click it to open a card above it with everything; click it again, or ×, to close:
 
 - 用时与速度: turns, steps, LLM time, tool time (a permission prompt's wait counts), average time per step and to first token, decode speed.
 - Token: total, input, cache reads and writes, output, cache hit rate.

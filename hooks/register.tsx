@@ -196,22 +196,25 @@ export const register: Register = on => {
     }
   })
 
-  // The footer slot is a short one the app cuts with an ellipsis: one compact control, nothing more.
-  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+  // One row above the prompt, at its full width (the footer's slot is short and cut with an
+  // ellipsis): the compact figure, right-aligned, and the card everything is in while it is open.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, fill)
     const totals = await read($, stats)
 
-    if (current === null) {
+    if (e.props.hasSurvey || current === null) {
       return next(e)
     }
 
-    // A tree of our own: the desktop footer draws a hook's tree, not a rewritten `modes`.
-    const { Box, Text, Button } = $.ui.resolve(e)
-    const modes = e.props.modes.join(' & ')
+    // The terminal's table answers Svg with a stand-in that draws nothing: it gets no icons.
+    const resolved = $.ui.resolve(e) as unknown as Elements
+    const el: Elements = e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
+    const { Box, Text, Button, Svg } = el
+    const open = await read($, isOpen)
 
-    return (
-      <Box flexDirection="row" gap={1}>
-        {modes !== '' && <Text dimColor>{modes}</Text>}
+    const line = (
+      <Box flexDirection="row" justifyContent="flex-end" alignItems="center" gap={1}>
+        {Svg ? <Svg source={ringSvg(14, percentOf(current))} alt="上下文" width={14} height={14} /> : null}
         <Button
           key="meter"
           plain
@@ -221,23 +224,12 @@ export const register: Register = on => {
         />
       </Box>
     )
-  })
 
-  // The card everything is in: drawn above the prompt, at full width, while the footer has it open.
-  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    const current = await read($, fill)
-    const totals = await read($, stats)
-
-    if (e.props.hasSurvey || current === null || !(await read($, isOpen))) {
-      return next(e)
+    if (!open) {
+      return line
     }
 
-    // The terminal's table answers Svg with a stand-in that draws nothing: it gets no icons.
-    const resolved = $.ui.resolve(e) as unknown as Elements
-    const el: Elements = e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
-    const { Box, Text, Button } = el
     const { context } = await $.session.usage({ breakdown: 'summary' })
-
     const columns: unknown[] = []
     if (totals !== null) {
       columns.push(column(el, gaugeSvg(14), '用时与速度', rows(el, timingRows(totals))))
@@ -246,14 +238,17 @@ export const register: Register = on => {
     columns.push(column(el, ringSvg(14, percentOf(current)), '上下文', contextRows(el, current, context.breakdown)))
 
     return (
-      <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
-        <Box flexDirection="row" justifyContent="space-between">
-          <Text bold>会话统计</Text>
-          <Button key="close" plain dimColor role="dismiss" label="×" onPress={() => void update($, isOpen, () => false)} />
+      <Box flexDirection="column">
+        <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
+          <Box flexDirection="row" justifyContent="space-between">
+            <Text bold>会话统计</Text>
+            <Button key="close" plain dimColor role="dismiss" label="×" onPress={() => void update($, isOpen, () => false)} />
+          </Box>
+          <Box flexDirection="row" flexWrap="wrap" columnGap={4} rowGap={1}>
+            {columns}
+          </Box>
         </Box>
-        <Box flexDirection="row" flexWrap="wrap" columnGap={4} rowGap={1}>
-          {columns}
-        </Box>
+        {line}
       </Box>
     )
   })
