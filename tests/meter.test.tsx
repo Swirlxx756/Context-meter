@@ -31,7 +31,7 @@ test('the row above the prompt shows the context fill on every surface', async (
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'context-meter', surface, ...above })
-    expect((await ui.find({ key: 'context' }))?.text).toBe('Context 42% · 84k / 200k')
+    expect(await label(ui, 'context')).toBe('Context 42% · 84k / 200k')
     if (surface === 'desktop') {
       expect((await ui.find({ type: 'Svg' }))?.props.alt).toBe('上下文')
     } else {
@@ -47,10 +47,18 @@ test('before any response the row shows a dash', async ($, on) => {
   await $.session.measure({ context: { window: 1_000_000 }, rateLimits: [], changed: ['context'] })
 
   const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
-  expect((await ui.find({ key: 'context' }))?.text).toBe('Context — / 1.0M')
-  expect(await ui.find({ key: 'stats' })).toBeUndefined()
+  expect(await label(ui, 'context')).toBe('Context — / 1.0M')
+  expect(await ui.find({ key: 'segment-stats' })).toBeUndefined()
   await ui.unmount()
 })
+
+// A left press on a figure, as the desktop and terminal report one over its Client.
+const click = (ui: { pointer: (e: any) => Promise<void> }, id: string) =>
+  ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: `segment-${id}` })
+
+// What a figure's Client is handed to draw.
+const label = async (ui: { find: (q: any) => Promise<any> }, id: string) =>
+  ((await ui.find({ key: `segment-${id}` }))?.props.props as { label: string } | undefined)?.label
 
 const usage = (input: number, output: number, cacheRead: number, cacheWrite: number) => ({
   model: 'claude-opus-5-5',
@@ -100,22 +108,23 @@ test('the footer adds turns, speed, tokens and cache hits; each opens its card',
   await $.tool.call({ tool: 'Bash', command: 'ls' })
 
   const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
-  expect((await ui.find({ key: 'stats' }))?.text).toBe('1 轮·2 步 · 200 tok/s')
-  expect((await ui.find({ key: 'tokens' }))?.text).toBe('20k tok · 缓存命中 94.00%')
-  expect((await ui.find({ key: 'context' }))?.text).toBe('Context 42% · 84k / 200k')
+  expect(await label(ui, 'stats')).toBe('1 轮·2 步 · 200 tok/s')
+  expect(await label(ui, 'tokens')).toBe('20k tok · 缓存命中 94.00%')
+  expect(await label(ui, 'context')).toBe('Context 42% · 84k / 200k')
   expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
 
   // Each figure toggles its own card above the row.
-  await ui.press({ key: 'stats' })
+  await click(ui, 'stats')
+  expect(((await ui.find({ key: 'segment-stats' }))?.props.props as { isActive: boolean }).isActive).toBe(true)
   for (const text of ['用时与速度', '6.0s', '4.0s', '2.0s']) {
     expect(await ui.find({ type: 'Text', text })).toBeDefined()
   }
-  await ui.press({ key: 'tokens' })
+  await click(ui, 'tokens')
   expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: '19k' })).toBeDefined()
-  await ui.press({ key: 'tokens' })
+  await click(ui, 'tokens')
   expect(await ui.find({ type: 'Text', text: '19k' })).toBeUndefined()
-  await ui.press({ key: 'context' })
+  await click(ui, 'context')
   expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeDefined()
   await ui.press({ key: 'close' })
   expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeUndefined()

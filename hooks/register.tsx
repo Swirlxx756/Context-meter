@@ -192,6 +192,17 @@ export const register: Register = on => {
     }
   })
 
+  // A press on a figure's Client: toggle that figure's card.
+  on('ui.message', async ($, e, next) => {
+    const match = /^segment-(stats|tokens|context)$/.exec(e.element)
+    if (match && (e.data as { press?: boolean } | null)?.press) {
+      const which = match[1] as Section
+      await update($, opened, now => (now === which ? null : which))
+    }
+
+    return next(e)
+  })
+
   // One row above the prompt, centered (the footer's slot is short and cut with an ellipsis): a
   // capsule of the figures, each one a control that opens its card right above itself.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -205,7 +216,9 @@ export const register: Register = on => {
     // The terminal's table answers Svg with a stand-in that draws nothing: it gets glyphs instead.
     const resolved = $.ui.resolve(e) as unknown as Elements
     const el: Elements = e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
-    const { Box, Text, Button, Svg } = el
+    const { Box, Text, Button, Svg, Client } = el
+    // A Client draws plain text and takes the click itself; where none is drawn, a Button.
+    const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
     const open = await read($, opened)
     const toggle = (which: Section) => () => void update($, opened, now => (now === which ? null : which))
     const close = () => void update($, opened, () => null)
@@ -225,7 +238,11 @@ export const register: Register = on => {
           ...(i > 0 ? [<Text dimColor>│</Text>] : []),
           <Box flexDirection="row" alignItems="center" gap={1}>
             {Svg ? <Svg source={s.svg} alt={s.title} width={14} height={14} /> : <Text dimColor>{s.glyph}</Text>}
-            <Button key={s.id} plain dimColor={open !== s.id} label={s.label} onPress={toggle(s.id)} />
+            {hasClient ? (
+              <Client key={`segment-${s.id}`} module="./segment.tsx" props={{ label: s.label, isActive: open === s.id }} />
+            ) : (
+              <Button key={s.id} plain dimColor={open !== s.id} label={s.label} onPress={toggle(s.id)} />
+            )}
           </Box>,
         ])}
       </Box>
@@ -280,7 +297,7 @@ const card = ({ Box, Text, Button, Svg }: Elements, svg: string, title: string, 
 )
 
 // The element constructors a drawing uses; Svg exists on the desktop, VS Code and mobile tables.
-type Elements = { Box: any; Text: any; Button: any; Svg?: any }
+type Elements = { Box: any; Text: any; Button: any; Svg?: any; Client?: any }
 
 const rows = ({ Box, Text }: Elements, list: [string, string][]) =>
   list.map(([name, value]) => (
