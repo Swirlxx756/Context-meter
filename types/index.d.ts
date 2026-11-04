@@ -22,8 +22,8 @@ export type Stats = {
   cacheWrite: number
 }
 
-/** The figure whose card is open above the row. */
-export type Section = 'stats' | 'tokens' | 'context'
+/** The figure whose card is open above the prompt; `all`, the footer's, opens every card. */
+export type Section = 'stats' | 'tokens' | 'context' | 'all'
 
 declare module 'claude-code' {
   interface PluginState {
