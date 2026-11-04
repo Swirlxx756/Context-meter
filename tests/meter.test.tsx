@@ -31,7 +31,12 @@ test('the row above the prompt shows the context fill on every surface', async (
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ plugin: 'context-meter', surface, ...above })
-    expect((await ui.find({ key: 'meter' }))?.text).toBe('42%')
+    expect((await ui.find({ key: 'context' }))?.text).toBe('Context 42% · 84k / 200k')
+    if (surface === 'desktop') {
+      expect((await ui.find({ type: 'Svg' }))?.props.alt).toBe('上下文')
+    } else {
+      expect(await ui.find({ type: 'Text', text: '◔' })).toBeDefined()
+    }
     await ui.unmount()
   }
 })
@@ -42,7 +47,8 @@ test('before any response the row shows a dash', async ($, on) => {
   await $.session.measure({ context: { window: 1_000_000 }, rateLimits: [], changed: ['context'] })
 
   const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
-  expect((await ui.find({ key: 'meter' }))?.text).toBe('—')
+  expect((await ui.find({ key: 'context' }))?.text).toBe('Context — / 1.0M')
+  expect(await ui.find({ key: 'stats' })).toBeUndefined()
   await ui.unmount()
 })
 
@@ -54,7 +60,7 @@ const usage = (input: number, output: number, cacheRead: number, cacheWrite: num
   cache_creation_input_tokens: cacheWrite,
 })
 
-test('the footer adds turns, speed, tokens and cache hits; a click opens the card', async ($, on) => {
+test('the footer adds turns, speed, tokens and cache hits; each opens its card', async ($, on) => {
   drawModes(on)
   const clock = mock.clock(on)
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] } }))
@@ -94,19 +100,24 @@ test('the footer adds turns, speed, tokens and cache hits; a click opens the car
   await $.tool.call({ tool: 'Bash', command: 'ls' })
 
   const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
-  expect((await ui.find({ key: 'meter' }))?.text).toBe('200tok/s 20k tok(94.00%) 42%')
-  expect(await ui.find({ type: 'Text', text: '会话统计' })).toBeUndefined()
+  expect((await ui.find({ key: 'stats' }))?.text).toBe('1 轮·2 步 · 200 tok/s')
+  expect((await ui.find({ key: 'tokens' }))?.text).toBe('20k tok · 缓存命中 94.00%')
+  expect((await ui.find({ key: 'context' }))?.text).toBe('Context 42% · 84k / 200k')
+  expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
 
-  // A click on the row opens the card above it; the same row, or ×, closes it.
-  await ui.press({ key: 'meter' })
-  for (const text of ['会话统计', '用时与速度', 'Token', '上下文', '6.0s', '4.0s', '2.0s', '19k', '84k (42%)']) {
+  // Each figure toggles its own card above the row.
+  await ui.press({ key: 'stats' })
+  for (const text of ['用时与速度', '6.0s', '4.0s', '2.0s']) {
     expect(await ui.find({ type: 'Text', text })).toBeDefined()
   }
-  expect(await ui.find({ key: 'meter' })).toBeDefined()
-  await ui.press({ key: 'meter' })
-  expect(await ui.find({ type: 'Text', text: '会话统计' })).toBeUndefined()
-  await ui.press({ key: 'meter' })
+  await ui.press({ key: 'tokens' })
+  expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '19k' })).toBeDefined()
+  await ui.press({ key: 'tokens' })
+  expect(await ui.find({ type: 'Text', text: '19k' })).toBeUndefined()
+  await ui.press({ key: 'context' })
+  expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeDefined()
   await ui.press({ key: 'close' })
-  expect(await ui.find({ type: 'Text', text: '会话统计' })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeUndefined()
   await ui.unmount()
 })

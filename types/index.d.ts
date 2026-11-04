@@ -22,8 +22,11 @@ export type Stats = {
   cacheWrite: number
 }
 
+/** The figure whose card is open above the row. */
+export type Section = 'stats' | 'tokens' | 'context'
+
 declare module 'claude-code' {
   interface PluginState {
-    'context-meter': { fill: Fill | null; stats: Stats | null; /** Whether the stats card is open above the prompt. */ isOpen: boolean }
+    'context-meter': { fill: Fill | null; stats: Stats | null; opened: Section | null }
   }
 }

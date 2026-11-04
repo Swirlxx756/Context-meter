@@ -1,11 +1,11 @@
 import { atom, read, update } from 'claude-code'
 import type { Register, SessionContextBreakdown, TurnUsage } from 'claude-code'
 
-import type { Fill, Stats } from '../types'
+import type { Fill, Section, Stats } from '../types'
 
 const fill = atom({ plugin: 'context-meter', key: 'fill' } as const, null)
 const stats = atom({ plugin: 'context-meter', key: 'stats' } as const, null)
-const isOpen = atom({ plugin: 'context-meter', key: 'isOpen' } as const, false)
+const opened = atom({ plugin: 'context-meter', key: 'opened' } as const, null)
 
 const fresh = (startedAt: number): Stats => ({
   startedAt,
@@ -35,10 +35,10 @@ const duration = (ms: number) => {
 
 const percentOf = (current: Fill) => (current.tokens === undefined ? undefined : (current.percent ?? 0))
 
-const contextLabel = (current: Fill) => {
-  const percent = percentOf(current)
-  return percent === undefined ? '—' : `${percent}%`
-}
+const contextLabel = (current: Fill) =>
+  current.tokens === undefined
+    ? `Context — / ${compact(current.window)}`
+    : `Context ${current.percent ?? 0}% · ${compact(current.tokens)} / ${compact(current.window)}`
 
 const speed = (s: Stats) => (s.decodeMs > 0 ? `${Math.round((s.outputTokens * 1000) / s.decodeMs)} tok/s` : '— tok/s')
 
@@ -51,13 +51,9 @@ const hitRate = (s: Stats) => {
 
 const totalTokens = (s: Stats) => prompted(s) + s.outputTokens
 
-// `132tok/s 3.5M tok(96.12%) 19%`: before any response the context figure alone.
-const footerLabel = (current: Fill, s: Stats | null) => {
-  const context = contextLabel(current)
-  if (s === null || s.steps === 0) return context
-  const rate = s.decodeMs > 0 ? `${Math.round((s.outputTokens * 1000) / s.decodeMs)}tok/s ` : ''
-  return `${rate}${compact(totalTokens(s))} tok(${hitRate(s)}) ${context}`
-}
+const turnsLabel = (s: Stats) => `${s.turns} 轮·${s.steps} 步 · ${speed(s)}`
+
+const tokensLabel = (s: Stats) => `${compact(totalTokens(s))} tok · 缓存命中 ${hitRate(s)}`
 
 // Vector icons for the surfaces that draw Svg (desktop, VS Code, mobile); a glyph stands in on the terminal.
 // A mid grey reads on light and dark alike, since an Svg is drawn as an image and inherits no text color.
@@ -197,7 +193,7 @@ export const register: Register = on => {
   })
 
   // One row above the prompt, at its full width (the footer's slot is short and cut with an
-  // ellipsis): the compact figure, right-aligned, and the card everything is in while it is open.
+  // ellipsis): the figures, right-aligned, each one a control that toggles its card above the row.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, fill)
     const totals = await read($, stats)
@@ -206,66 +202,76 @@ export const register: Register = on => {
       return next(e)
     }
 
-    // The terminal's table answers Svg with a stand-in that draws nothing: it gets no icons.
+    // The terminal's table answers Svg with a stand-in that draws nothing: it gets glyphs instead.
     const resolved = $.ui.resolve(e) as unknown as Elements
     const el: Elements = e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
     const { Box, Text, Button, Svg } = el
-    const open = await read($, isOpen)
+    const open = await read($, opened)
+    const toggle = (which: Section) => () => void update($, opened, now => (now === which ? null : which))
+    const close = () => void update($, opened, () => null)
+    const icon = (glyph: string, svg: string, alt: string) =>
+      Svg ? <Svg source={svg} alt={alt} width={14} height={14} /> : <Text dimColor>{glyph}</Text>
+    const hasTotals = totals !== null && totals.steps > 0
 
     const line = (
-      <Box flexDirection="row" justifyContent="flex-end" alignItems="center" gap={1}>
-        {Svg ? <Svg source={ringSvg(14, percentOf(current))} alt="上下文" width={14} height={14} /> : null}
-        <Button
-          key="meter"
-          plain
-          dimColor
-          label={footerLabel(current, totals)}
-          onPress={() => void update($, isOpen, now => !now)}
-        />
+      <Box flexDirection="row" justifyContent="flex-end" alignItems="center" columnGap={3}>
+        {hasTotals && (
+          <Box flexDirection="row" alignItems="center" gap={1}>
+            {icon('◷', gaugeSvg(14), '用时与速度')}
+            <Button key="stats" plain dimColor label={turnsLabel(totals)} onPress={toggle('stats')} />
+          </Box>
+        )}
+        {hasTotals && (
+          <Box flexDirection="row" alignItems="center" gap={1}>
+            {icon('⛁', databaseSvg(14), 'Token')}
+            <Button key="tokens" plain dimColor label={tokensLabel(totals)} onPress={toggle('tokens')} />
+          </Box>
+        )}
+        <Box flexDirection="row" alignItems="center" gap={1}>
+          {icon('◔', ringSvg(14, percentOf(current)), '上下文')}
+          <Button key="context" plain dimColor label={contextLabel(current)} onPress={toggle('context')} />
+        </Box>
       </Box>
     )
 
-    if (!open) {
-      return line
+    let card: unknown = null
+    if (open === 'stats' && hasTotals) {
+      card = panel(el, gaugeSvg(16), '用时与速度', rows(el, timingRows(totals)), close)
+    } else if (open === 'tokens' && hasTotals) {
+      card = panel(el, databaseSvg(16), 'Token', rows(el, tokenRows(totals)), close)
+    } else if (open === 'context') {
+      const { context } = await $.session.usage({ breakdown: 'summary' })
+      card = panel(el, ringSvg(16, percentOf(current)), '上下文', contextRows(el, current, context.breakdown), close)
     }
 
-    const { context } = await $.session.usage({ breakdown: 'summary' })
-    const columns: unknown[] = []
-    if (totals !== null) {
-      columns.push(column(el, gaugeSvg(14), '用时与速度', rows(el, timingRows(totals))))
-      columns.push(column(el, databaseSvg(14), 'Token', rows(el, tokenRows(totals))))
-    }
-    columns.push(column(el, ringSvg(14, percentOf(current)), '上下文', contextRows(el, current, context.breakdown)))
-
-    return (
+    return card === null ? (
+      line
+    ) : (
       <Box flexDirection="column">
-        <Box flexDirection="column" borderStyle="round" borderDimColor paddingX={1}>
-          <Box flexDirection="row" justifyContent="space-between">
-            <Text bold>会话统计</Text>
-            <Button key="close" plain dimColor role="dismiss" label="×" onPress={() => void update($, isOpen, () => false)} />
-          </Box>
-          <Box flexDirection="row" flexWrap="wrap" columnGap={4} rowGap={1}>
-            {columns}
-          </Box>
-        </Box>
+        {card}
         {line}
       </Box>
     )
   })
 }
 
-// The element constructors a drawing uses; Svg exists on the desktop, VS Code and mobile tables.
-type Elements = { Box: any; Text: any; Button: any; Svg?: any }
-
-const column = ({ Box, Text, Svg }: Elements, svg: string, title: string, body: unknown[]) => (
-  <Box flexDirection="column" width={30}>
-    <Box flexDirection="row" alignItems="center" gap={1}>
-      {Svg ? <Svg source={svg} alt={title} width={14} height={14} /> : null}
-      <Text bold>{title}</Text>
+// The card of one figure, right-aligned above the row.
+const panel = ({ Box, Text, Button, Svg }: Elements, svg: string, title: string, body: unknown[], close: () => void) => (
+  <Box flexDirection="row" justifyContent="flex-end">
+    <Box flexDirection="column" width={40} borderStyle="round" borderDimColor paddingX={1}>
+      <Box flexDirection="row" alignItems="center" gap={1}>
+        {Svg ? <Svg source={svg} alt={title} width={16} height={16} /> : null}
+        <Text bold>{title}</Text>
+        <Box flexGrow={1} />
+        <Button key="close" plain dimColor role="dismiss" label="×" onPress={close} />
+      </Box>
+      {body}
     </Box>
-    {body}
   </Box>
 )
+
+// The element constructors a drawing uses; Svg exists on the desktop, VS Code and mobile tables.
+type Elements = { Box: any; Text: any; Button: any; Svg?: any }
 
 const rows = ({ Box, Text }: Elements, list: [string, string][]) =>
   list.map(([name, value]) => (
