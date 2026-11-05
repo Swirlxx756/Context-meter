@@ -236,20 +236,19 @@ export const register: Register = on => {
     }
   })
 
-  // The pointer over a figure's Client shows its card; leaving it hides the card again.
+  // A press on a figure's Client toggles its card: open it, close it again, or swap to another.
   on('ui.message', async ($, e, next) => {
     const match = /^segment-(stats|tokens|context)$/.exec(e.element)
-    const hover = (e.data as { hover?: boolean } | null)?.hover
-    if (match && hover !== undefined) {
+    if (match && (e.data as { press?: boolean } | null)?.press) {
       const which = match[1] as Section
-      await update($, opened, now => (hover ? which : now === which ? null : now))
+      await update($, opened, now => (now === which ? null : which))
     }
 
     return next(e)
   })
 
   // One row above the prompt, centered (the footer's slot is short and cut with an ellipsis): the
-  // figures, each one showing its card right above itself while the pointer is over it.
+  // figures, each one opening its card right above itself on a click, and closing it on another.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const current = await read($, fill)
     const totals = await read($, stats)
@@ -262,7 +261,7 @@ export const register: Register = on => {
     const resolved = $.ui.resolve(e) as unknown as Elements
     const el: Elements = e.surface === 'terminal' ? { ...resolved, Svg: undefined } : resolved
     const { Box, Text, Button, Svg, Client } = el
-    // A Client draws plain text and hears the pointer; where none is drawn (VS Code, mobile), a Button.
+    // A Client draws plain text and takes the click itself; where none is drawn (VS Code, mobile), a Button.
     const hasClient = e.surface === 'terminal' || e.surface === 'desktop'
     const open = await read($, opened)
     const toggle = (which: Section) => () => void update($, opened, now => (now === which ? null : which))

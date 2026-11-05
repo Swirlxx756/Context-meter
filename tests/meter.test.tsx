@@ -52,11 +52,11 @@ test('before any response the row shows a dash', async ($, on) => {
   await ui.unmount()
 })
 
-// The pointer entering and leaving a figure, as the desktop and terminal report it over its Client.
-const enter = (ui: { pointer: (e: any) => Promise<void> }, id: string) =>
+// A left press on a figure, and the pointer only passing over it, as the desktop and terminal report them.
+const click = (ui: { pointer: (e: any) => Promise<void> }, id: string) =>
+  ui.pointer({ type: 'down', x: 1, y: 0, button: 'left', in: `segment-${id}` })
+const pass = (ui: { pointer: (e: any) => Promise<void> }, id: string) =>
   ui.pointer({ type: 'enter', x: 1, y: 0, in: `segment-${id}` })
-const leave = (ui: { pointer: (e: any) => Promise<void> }, id: string) =>
-  ui.pointer({ type: 'leave', x: 1, y: 0, in: `segment-${id}` })
 
 // What a figure's Client is handed to draw.
 const label = async (ui: { find: (q: any) => Promise<any> }, id: string) =>
@@ -70,7 +70,7 @@ const usage = (input: number, output: number, cacheRead: number, cacheWrite: num
   cache_creation_input_tokens: cacheWrite,
 })
 
-test('the footer adds turns, speed, tokens and cache hits; each shows its card on hover', async ($, on) => {
+test('the footer adds turns, speed, tokens and cache hits; each opens its card on a click', async ($, on) => {
   drawModes(on)
   const clock = mock.clock(on)
   mock.store(on)
@@ -132,27 +132,29 @@ test('the footer adds turns, speed, tokens and cache hits; each shows its card o
   expect(await label(ui, 'context')).toBe('Context 42% · 84k / 200k')
   expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
 
-  // The pointer over a figure shows its card above the row, with no × to press; leaving hides it.
-  await enter(ui, 'stats')
+  // The pointer passing over a figure does nothing.
+  await pass(ui, 'stats')
+  expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
+
+  // A click opens its card above it, with no × (the same figure closes it); another swaps it.
+  await click(ui, 'stats')
   expect(((await ui.find({ key: 'segment-stats' }))?.props.props as { isActive: boolean }).isActive).toBe(true)
   for (const text of ['用时与速度', '6.0s', '4.0s', '2.0s']) {
     expect(await ui.find({ type: 'Text', text })).toBeDefined()
   }
   expect(await ui.find({ key: 'close' })).toBeUndefined()
-  // Moving straight onto the next figure: its enter can come before the last one's leave.
-  await enter(ui, 'tokens')
-  await leave(ui, 'stats')
+  await click(ui, 'tokens')
   expect(await ui.find({ type: 'Text', text: '用时与速度' })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: '19k' })).toBeDefined()
-  await leave(ui, 'tokens')
+  await click(ui, 'tokens')
   expect(await ui.find({ type: 'Text', text: '19k' })).toBeUndefined()
-  await enter(ui, 'context')
+  await click(ui, 'context')
   expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeDefined()
   // The window in four: system prompt and memory, tool definitions, messages, and what is left.
   for (const text of ['系统提示词', '4k · 2.0%', '工具定义', '20k · 10.0%', '对话消息', '60k · 30.0%', '剩余空间', '83k · 41.5%']) {
     expect(await ui.find({ type: 'Text', text })).toBeDefined()
   }
-  await leave(ui, 'context')
+  await click(ui, 'context')
   expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeUndefined()
   await ui.unmount()
 })
