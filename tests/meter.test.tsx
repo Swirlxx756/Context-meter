@@ -73,6 +73,8 @@ const usage = (input: number, output: number, cacheRead: number, cacheWrite: num
 test('the footer adds turns, speed, tokens and cache hits; each shows its card on hover', async ($, on) => {
   drawModes(on)
   const clock = mock.clock(on)
+  mock.store(on)
+  on('session.id', () => ({ value: 's1' }))
   const category = (name: string, tokens: number, kind: string) => ({ name, tokens, kind, color: 'text', isDeferred: kind === 'deferred' })
   const breakdown = {
     rawMaxTokens: 200_000,
@@ -152,5 +154,65 @@ test('the footer adds turns, speed, tokens and cache hits; each shows its card o
   }
   await leave(ui, 'context')
   expect(await ui.find({ type: 'Text', text: '84k (42%)' })).toBeUndefined()
+  await ui.unmount()
+})
+
+// A session's totals as an earlier run of it kept them.
+const kept = {
+  startedAt: 0, turns: 3, steps: 7, llmMs: 60_000, toolMs: 30_000, ttftMs: 14_000, ttftCount: 7,
+  outputTokens: 7_000, decodeMs: 35_000, inputTokens: 1_000, cacheRead: 90_000, cacheWrite: 9_000,
+}
+
+test('a resumed session goes on from the totals it had', async ($, on) => {
+  drawModes(on)
+  mock.store(on, { 'stats:s1': kept })
+  on('session.id', () => ({ value: 's1' }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.session.measure({ context: { tokens: 84_000, window: 200_000, percent: 42 }, rateLimits: [], changed: ['context'] })
+  await $.turn.start({ text: 'go', turnId: 't1' })
+
+  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
+  expect(await label(ui, 'stats')).toBe('4 轮·7 步 · 200 tok/s')
+  expect(await label(ui, 'tokens')).toBe('107k tok · 缓存命中 90.00%')
+  await ui.unmount()
+})
+
+test('a /clear hands the totals on to the session it starts', async ($, on) => {
+  drawModes(on)
+  mock.store(on, { 'stats:s1': kept })
+  let id = 's1'
+  on('session.id', () => ({ value: id }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 200_000 }, rateLimits: [] } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('session.end', () => ({ sessionId: id }))
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.session.end({ reason: 'clear' } as any)
+  id = 's2'
+  await $.turn.start({ text: 'go', turnId: 't1' })
+
+  await $.session.measure({ context: { tokens: 84_000, window: 200_000, percent: 42 }, rateLimits: [], changed: ['context'] })
+  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
+  expect(await label(ui, 'stats')).toBe('4 轮·7 步 · 200 tok/s')
+  await ui.unmount()
+})
+
+test('after a /clear that left no state, counting picks up the totals handed on', async ($, on) => {
+  drawModes(on)
+  mock.store(on, { carry: kept })
+  on('session.id', () => ({ value: 's2' }))
+  on('turn.start', (_, e) => ({ turnId: e.turnId }))
+
+  // No session.start after a /clear: the first turn of the new session finds the state empty.
+  await $.turn.start({ text: 'go', turnId: 't1' })
+  await $.session.measure({ context: { tokens: 84_000, window: 200_000, percent: 42 }, rateLimits: [], changed: ['context'] })
+
+  const ui = await $.ui.mount({ plugin: 'context-meter', surface: 'desktop', ...above })
+  expect(await label(ui, 'stats')).toBe('4 轮·7 步 · 200 tok/s')
   await ui.unmount()
 })

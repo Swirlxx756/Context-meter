@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { ContextCategory, Register, SessionContextBreakdown, TurnUsage } from 'claude-code'
+import type { ContextCategory, EngineInterface, Register, SessionContextBreakdown, TurnUsage } from 'claude-code'
 
 import type { Fill, Section, Stats } from '../types'
 
@@ -110,15 +110,60 @@ const addUsage = (s: Stats, u: TurnUsage | null | undefined): Stats =>
       }
     : s
 
+// Each session's totals are kept on this machine under its id, so a resumed session goes on from
+// where it stopped; a /clear hands them on to the session it starts (`CARRY`), and they go on there.
+const KEY = 'stats:'
+const CARRY = 'carry'
+const KEPT = 200
+
+const isStats = (v: unknown): v is Stats =>
+  typeof v === 'object' && v !== null && typeof (v as Stats).steps === 'number' && typeof (v as Stats).llmMs === 'number'
+
+const keep = async ($: EngineInterface, value: Stats) => {
+  const key = KEY + (await $.session.id())
+  const keys = await $.store.keys()
+  if (!keys.includes(key)) {
+    // The oldest sessions' totals go first, so the store stays small.
+    const ours = keys.filter(k => k.startsWith(KEY))
+    for (const old of ours.slice(0, Math.max(0, ours.length - KEPT + 1))) await $.store.delete(old)
+  }
+  await $.store.set(key, value)
+}
+
+// Adds to the session's totals and keeps them. A /clear may leave the session's state empty with
+// no session.start after it: the totals it handed on are taken up again then.
+const bump = async ($: EngineInterface, add: (s: Stats) => Stats) => {
+  if ((await read($, stats)) === null) {
+    const carried = await $.store.get(CARRY)
+    const base = isStats(carried) ? carried : fresh(0)
+    await update($, stats, s => s ?? base)
+  }
+  await update($, stats, s => (s ? add(s) : s))
+  const now = await read($, stats)
+  if (now) await keep($, now)
+}
+
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
     const { context, startedAt } = await $.session.usage()
     await update($, fill, (): Fill => context)
-    // A reload keeps the totals; /clear moves startedAt and starts them over.
-    await update($, stats, (s): Stats => (s && s.startedAt === startedAt ? s : fresh(startedAt)))
+    // A resumed session's totals come back from the store; a reload keeps those it has; a new
+    // session starts at zero.
+    const stored = await $.store.get(KEY + (await $.session.id()))
+    await update($, stats, (s): Stats => (isStats(stored) ? stored : (s ?? fresh(startedAt))))
 
     return result
+  })
+
+  // /clear starts another session in the same process: the totals go on with it.
+  on('session.end', async ($, e, next) => {
+    if (e.reason === 'clear') {
+      const now = await read($, stats)
+      if (now) await $.store.set(CARRY, now)
+    }
+
+    return next(e)
   })
 
   on('session.measure', async ($, e, next) => {
@@ -132,7 +177,7 @@ export const register: Register = on => {
   on('turn.start', async ($, e, next) => {
     const result = await next(e)
     if (e.agentId === undefined) {
-      await update($, stats, s => (s ? { ...s, turns: s.turns + 1 } : s))
+      await bump($, s => ({ ...s, turns: s.turns + 1 }))
     }
 
     return result
@@ -158,8 +203,7 @@ export const register: Register = on => {
     const response = step.value
     const endedAt = await $.clock.now()
 
-    await update($, stats, s => {
-      if (!s) return s
+    await bump($, s => {
       const timed: Stats = {
         ...s,
         steps: s.steps + 1,
@@ -188,7 +232,7 @@ export const register: Register = on => {
       return await next(e)
     } finally {
       const endedAt = await $.clock.now()
-      await update($, stats, s => (s ? { ...s, toolMs: s.toolMs + (endedAt - startedAt) } : s))
+      await bump($, s => ({ ...s, toolMs: s.toolMs + (endedAt - startedAt) }))
     }
   })
 

@@ -14,7 +14,7 @@ Point at a figure and its card shows right above it; move away and it hides. (VS
 - Token: total, input, cache reads and writes, output, cache hit rate.
 - 上下文: tokens used and the window, then the window in four, each with a bar: 系统提示词 (the system prompt and memory files), 工具定义 (tool, agent, skill and command listings), 对话消息, and 剩余空间.
 
-Totals count the session's main loop; `/clear` starts them over.
+Totals count the session's main loop and are kept on this machine under the session's id: a resumed session goes on from where it stopped, and a `/clear` carries them on into the session it starts. The 200 most recent sessions are kept.
 
 It updates after every model response. Before the first response of a session (or right after a compaction) it shows the window alone: `Context — / 200k`.
 
